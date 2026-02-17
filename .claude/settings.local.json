@@ -46,7 +46,8 @@
       "WebFetch(domain:www.isomorphiclabs.com)",
       "Bash(git init:*)",
       "Bash(git add:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(git checkout:*)"
     ]
   }
 }
