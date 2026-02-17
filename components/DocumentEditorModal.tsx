@@ -16,6 +16,14 @@ interface DocumentEditorModalProps {
   mode?: 'modal' | 'inline';
   /** Called when user clicks "Generate Card Content" with a detail level from the heading context menu */
   onGenerateCard?: (headingId: string, detailLevel: DetailLevel, headingText: string) => void;
+  /** When true, closing always shows a confirmation dialog (used for new custom cards) */
+  isCustomCard?: boolean;
+  /** Called when user discards a custom card — removes the heading entirely */
+  onDiscardCustomCard?: () => void;
+  /** Called when user saves a custom card with a chosen name — renames the heading */
+  onSaveCustomCard?: (name: string) => void;
+  /** Existing heading names for duplicate validation */
+  existingCardNames?: string[];
 }
 
 /** Imperative handle exposed to parent for unsaved-changes gating */
@@ -32,7 +40,7 @@ interface ContextMenuState {
   headingId: string;
 }
 
-const DocumentEditorModal = forwardRef<DocumentEditorHandle, DocumentEditorModalProps>(({ document: doc, onSave, onClose, mode = 'modal', onGenerateCard }, handleRef) => {
+const DocumentEditorModal = forwardRef<DocumentEditorHandle, DocumentEditorModalProps>(({ document: doc, onSave, onClose, mode = 'modal', onGenerateCard, isCustomCard, onDiscardCustomCard, onSaveCustomCard, existingCardNames }, handleRef) => {
   const isInline = mode === 'inline';
   const editorRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -250,18 +258,21 @@ const DocumentEditorModal = forwardRef<DocumentEditorHandle, DocumentEditorModal
   const [showUnsavedDialog, setShowUnsavedDialog] = useState(false);
 
   const handleDiscardAndClose = useCallback(() => {
-    if (editing.isDirty) {
+    if (isCustomCard || editing.isDirty) {
       setShowUnsavedDialog(true);
       return;
     }
     onClose();
-  }, [editing.isDirty, onClose]);
+  }, [editing.isDirty, onClose, isCustomCard]);
 
   const confirmDiscard = useCallback(() => {
     setShowUnsavedDialog(false);
     editing.discardEdits();
+    if (isCustomCard && onDiscardCustomCard) {
+      onDiscardCustomCard();
+    }
     onClose();
-  }, [editing.discardEdits, onClose]);
+  }, [editing.discardEdits, onClose, isCustomCard, onDiscardCustomCard]);
 
   const confirmSave = useCallback(() => {
     setShowUnsavedDialog(false);
@@ -427,11 +438,10 @@ const DocumentEditorModal = forwardRef<DocumentEditorHandle, DocumentEditorModal
   const contextMenuEl = contextMenu && contextHeading ? createPortal(
     <div
       ref={menuRef}
-      className="fixed z-[130] min-w-[180px] bg-white rounded-xl border border-zinc-200 py-1 animate-in fade-in zoom-in-95 duration-150"
+      className="fixed z-[130] min-w-[180px] bg-white rounded-[6px] border border-black py-1 animate-in fade-in zoom-in-95 duration-150"
       style={{
         top: contextMenu.y,
         left: contextMenu.x,
-        boxShadow: '0 8px 30px rgba(0,0,0,0.12), 0 2px 8px rgba(0,0,0,0.08)',
       }}
     >
       {onGenerateCard && (
@@ -440,7 +450,7 @@ const DocumentEditorModal = forwardRef<DocumentEditorHandle, DocumentEditorModal
             <button
               onClick={() => setGenerateContentSubmenuOpen(prev => !prev)}
               onMouseEnter={() => setGenerateContentSubmenuOpen(true)}
-              className="w-full text-left px-3 py-2 text-[11px] font-bold text-zinc-700 hover:bg-zinc-50 transition-colors flex items-center justify-between"
+              className="w-full text-left px-3 py-2 text-[11px] font-bold text-black hover:bg-zinc-50 transition-colors flex items-center justify-between"
             >
               <span className="flex items-center gap-2">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-zinc-400">
@@ -455,8 +465,7 @@ const DocumentEditorModal = forwardRef<DocumentEditorHandle, DocumentEditorModal
 
             {generateContentSubmenuOpen && (
               <div
-                className="absolute left-full top-0 ml-1 min-w-[120px] bg-white rounded-xl border border-zinc-200 py-1 animate-in fade-in zoom-in-95 duration-100"
-                style={{ boxShadow: '0 8px 30px rgba(0,0,0,0.12), 0 2px 8px rgba(0,0,0,0.08)' }}
+                className="absolute left-full top-0 ml-1 min-w-[120px] bg-white rounded-[6px] border border-black py-1 animate-in fade-in zoom-in-95 duration-100"
               >
                 {(['Executive', 'Standard', 'Detailed'] as DetailLevel[]).map(level => (
                   <button
@@ -472,7 +481,7 @@ const DocumentEditorModal = forwardRef<DocumentEditorHandle, DocumentEditorModal
                         setGeneratingHeadingId(null);
                       }
                     }}
-                    className="w-full text-left px-3 py-2 text-[11px] text-zinc-700 hover:bg-zinc-50 transition-colors flex items-center gap-2"
+                    className="w-full text-left px-3 py-2 text-[11px] text-black hover:bg-zinc-50 transition-colors flex items-center gap-2"
                   >
                     <span className="w-10 h-4 rounded bg-zinc-100 text-[9px] font-bold text-zinc-500 flex items-center justify-center">
                       {level === 'Executive' ? 'Exec' : level === 'Standard' ? 'Std' : 'Detail'}
@@ -489,7 +498,7 @@ const DocumentEditorModal = forwardRef<DocumentEditorHandle, DocumentEditorModal
 
       <button
         onClick={handleSelectHeadingAndContent}
-        className="w-full text-left px-3 py-2 text-[11px] text-zinc-700 hover:bg-zinc-50 transition-colors flex items-center gap-2"
+        className="w-full text-left px-3 py-2 text-[11px] text-black hover:bg-zinc-50 transition-colors flex items-center gap-2"
       >
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-zinc-400">
           <path d="M5 3a2 2 0 0 0-2 2"/><path d="M19 3a2 2 0 0 1 2 2"/><path d="M21 19a2 2 0 0 1-2 2"/><path d="M5 21a2 2 0 0 1-2-2"/><path d="M9 3h1"/><path d="M9 21h1"/><path d="M14 3h1"/><path d="M14 21h1"/><path d="M3 9v1"/><path d="M21 9v1"/><path d="M3 14v1"/><path d="M21 14v1"/>
@@ -502,7 +511,7 @@ const DocumentEditorModal = forwardRef<DocumentEditorHandle, DocumentEditorModal
       <button
         onClick={handlePromote}
         disabled={!canPromote}
-        className={`w-full text-left px-3 py-2 text-[11px] hover:bg-zinc-50 transition-colors flex items-center gap-2 ${canPromote ? 'text-zinc-700' : 'text-zinc-300 pointer-events-none'}`}
+        className={`w-full text-left px-3 py-2 text-[11px] hover:bg-zinc-50 transition-colors flex items-center gap-2 ${canPromote ? 'text-black' : 'text-zinc-300 pointer-events-none'}`}
       >
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={canPromote ? 'text-zinc-400' : 'text-zinc-200'}>
           <path d="m15 18-6-6 6-6"/>
@@ -514,7 +523,7 @@ const DocumentEditorModal = forwardRef<DocumentEditorHandle, DocumentEditorModal
       <button
         onClick={handleDemote}
         disabled={!canDemote}
-        className={`w-full text-left px-3 py-2 text-[11px] hover:bg-zinc-50 transition-colors flex items-center gap-2 ${canDemote ? 'text-zinc-700' : 'text-zinc-300 pointer-events-none'}`}
+        className={`w-full text-left px-3 py-2 text-[11px] hover:bg-zinc-50 transition-colors flex items-center gap-2 ${canDemote ? 'text-black' : 'text-zinc-300 pointer-events-none'}`}
       >
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={canDemote ? 'text-zinc-400' : 'text-zinc-200'}>
           <path d="m9 18 6-6-6-6"/>
@@ -527,7 +536,7 @@ const DocumentEditorModal = forwardRef<DocumentEditorHandle, DocumentEditorModal
 
       <button
         onClick={expandAll}
-        className="w-full text-left px-3 py-2 text-[11px] text-zinc-700 hover:bg-zinc-50 transition-colors flex items-center gap-2"
+        className="w-full text-left px-3 py-2 text-[11px] text-black hover:bg-zinc-50 transition-colors flex items-center gap-2"
       >
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-zinc-400">
           <polyline points="6 9 12 15 18 9" />
@@ -537,7 +546,7 @@ const DocumentEditorModal = forwardRef<DocumentEditorHandle, DocumentEditorModal
 
       <button
         onClick={collapseAll}
-        className="w-full text-left px-3 py-2 text-[11px] text-zinc-700 hover:bg-zinc-50 transition-colors flex items-center gap-2"
+        className="w-full text-left px-3 py-2 text-[11px] text-black hover:bg-zinc-50 transition-colors flex items-center gap-2"
       >
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-zinc-400">
           <polyline points="18 15 12 9 6 15" />
@@ -551,7 +560,7 @@ const DocumentEditorModal = forwardRef<DocumentEditorHandle, DocumentEditorModal
         <button
           onClick={() => setLevelSubmenuOpen(prev => !prev)}
           onMouseEnter={() => setLevelSubmenuOpen(true)}
-          className="w-full text-left px-3 py-2 text-[11px] text-zinc-700 hover:bg-zinc-50 transition-colors flex items-center justify-between"
+          className="w-full text-left px-3 py-2 text-[11px] text-black hover:bg-zinc-50 transition-colors flex items-center justify-between"
         >
           <span className="flex items-center gap-2">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-zinc-400">
@@ -566,14 +575,13 @@ const DocumentEditorModal = forwardRef<DocumentEditorHandle, DocumentEditorModal
 
         {levelSubmenuOpen && (
           <div
-            className="absolute left-full top-0 ml-1 min-w-[100px] bg-white rounded-xl border border-zinc-200 py-1 animate-in fade-in zoom-in-95 duration-100"
-            style={{ boxShadow: '0 8px 30px rgba(0,0,0,0.12), 0 2px 8px rgba(0,0,0,0.08)' }}
+            className="absolute left-full top-0 ml-1 min-w-[100px] bg-white rounded-[6px] border border-black py-1 animate-in fade-in zoom-in-95 duration-100"
           >
             {[1, 2, 3].map(lvl => (
               <button
                 key={lvl}
                 onClick={() => handleSelectLevel(lvl)}
-                className="w-full text-left px-3 py-2 text-[11px] text-zinc-700 hover:bg-zinc-50 transition-colors flex items-center gap-2"
+                className="w-full text-left px-3 py-2 text-[11px] text-black hover:bg-zinc-50 transition-colors flex items-center gap-2"
               >
                 <span className="w-5 h-4 rounded bg-zinc-100 text-[9px] font-bold text-zinc-500 flex items-center justify-center">
                   H{lvl}
@@ -642,6 +650,22 @@ const DocumentEditorModal = forwardRef<DocumentEditorHandle, DocumentEditorModal
           onSave={confirmSave}
           onDiscard={confirmDiscard}
           onCancel={() => setShowUnsavedDialog(false)}
+          {...(isCustomCard ? {
+            title: 'Custom card',
+            description: 'Name your card and save it to the cards list, or discard it.',
+            saveLabel: 'Save and Add to Cards',
+            discardLabel: 'Discard Changes',
+            nameInput: {
+              defaultName: doc.name,
+              existingNames: existingCardNames || [],
+              onSaveWithName: (name: string) => {
+                setShowUnsavedDialog(false);
+                editing.saveEdits();
+                onSaveCustomCard?.(name);
+                onClose();
+              },
+            },
+          } : {})}
         />
       )}
     </div>,

@@ -813,8 +813,8 @@ const AnnotationWorkbench: React.FC<AnnotationWorkbenchProps> = ({
   const editingSketch = editingSketchId ? annotations.find(a => a.id === editingSketchId && a.type === 'sketch') as SketchAnnotation | undefined : undefined;
 
   const imageClasses = isInline
-    ? 'w-full object-contain rounded-[20px]'
-    : 'max-w-[90vw] max-h-[85vh] object-contain rounded-[20px] shadow-[0_50px_100px_rgba(0,0,0,0.1)]';
+    ? 'w-full object-contain'
+    : 'max-w-[90vw] max-h-[85vh] object-contain shadow-[0_50px_100px_rgba(0,0,0,0.1)]';
 
   return (
     <div className="relative w-full h-full" tabIndex={isInline ? 0 : undefined} style={{ outline: 'none' }}>
@@ -863,8 +863,8 @@ const AnnotationWorkbench: React.FC<AnnotationWorkbenchProps> = ({
 
       {/* Version history thumbnail strip */}
       {showVersionStrip && versions.length > 1 && (
-        <div className={`absolute top-12 right-3 z-[16] bg-white/95 backdrop-blur-xl rounded-2xl shadow-2xl border border-zinc-100 p-3 animate-in fade-in slide-in-from-top-2 duration-200 ${isInline ? 'max-w-[280px]' : 'max-w-[400px]'}`}>
-          <div className="text-[8px] font-black uppercase tracking-[0.2em] text-zinc-400 mb-2 px-1">Version History</div>
+        <div className={`absolute top-12 right-3 z-[16] bg-white/95 backdrop-blur-xl rounded-[6px] border border-black p-3 animate-in fade-in slide-in-from-top-2 duration-200 ${isInline ? 'max-w-[280px]' : 'max-w-[400px]'}`}>
+          <div className="text-[8px] font-black uppercase tracking-[0.2em] text-black mb-2 px-1">Version History</div>
           <div className="flex items-center space-x-2 overflow-x-auto pb-1">
             {versions.map((v, i) => (
               <button
@@ -894,7 +894,7 @@ const AnnotationWorkbench: React.FC<AnnotationWorkbenchProps> = ({
 
       {/* Modification overlay */}
       {isModifying && (
-        <div className="absolute inset-0 z-[18] flex items-center justify-center bg-[#ccff00]/10 backdrop-blur-sm pointer-events-none rounded-[20px]">
+        <div className="absolute inset-0 z-[18] flex items-center justify-center bg-[#ccff00]/10 backdrop-blur-sm pointer-events-none">
           <div className="flex flex-col items-center space-y-3 animate-pulse">
             <div className="w-12 h-12 rounded-full border-4 border-[#ccff00] border-t-transparent animate-spin" />
             <span className="text-xs font-black uppercase tracking-[0.2em] text-zinc-700">Refining...</span>
@@ -949,7 +949,7 @@ const AnnotationWorkbench: React.FC<AnnotationWorkbenchProps> = ({
             <canvas
               ref={canvasRef}
               className="absolute top-0 left-0 w-full h-full pointer-events-none"
-              style={{ borderRadius: '20px' }}
+              style={{}}
             />
             {overlay}
           </div>

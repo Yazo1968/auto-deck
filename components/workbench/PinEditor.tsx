@@ -36,8 +36,12 @@ const PinEditor: React.FC<PinEditorProps> = ({ instruction, position, onSave, on
   }, [text]);
 
   const handleSave = () => {
-    onSave(text);
-    onClose();
+    if (text.trim() === '') {
+      onDelete();
+    } else {
+      onSave(text);
+      onClose();
+    }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -62,9 +66,9 @@ const PinEditor: React.FC<PinEditorProps> = ({ instruction, position, onSave, on
 
   return (
     <div ref={popoverRef} style={popoverStyle} className="animate-in fade-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
-      <div className="w-72 bg-white rounded-2xl shadow-2xl border border-zinc-100 overflow-hidden">
+      <div className="w-72 bg-white rounded-[6px] border border-black overflow-hidden">
         <div className="px-4 py-3 border-b border-zinc-50 flex items-center justify-between">
-          <span className="text-[9px] font-black uppercase tracking-[0.2em] text-zinc-400">Pin Instruction</span>
+          <span className="text-[9px] font-black uppercase tracking-[0.2em] text-black">Pin Instruction</span>
           <button
             onClick={onDelete}
             className="text-zinc-400 hover:text-red-500 transition-colors"
@@ -83,13 +87,13 @@ const PinEditor: React.FC<PinEditorProps> = ({ instruction, position, onSave, on
             onKeyDown={handleKeyDown}
             placeholder="e.g., Change this data point to 22%"
             rows={3}
-            className="w-full bg-zinc-50 border border-zinc-100 rounded-xl px-3 py-2 text-sm resize-none focus:outline-none focus:border-[#ccff00] transition-colors placeholder:text-zinc-300"
+            className="w-full bg-zinc-50 border border-black rounded-xl px-3 py-2 text-sm resize-none focus:outline-none transition-colors placeholder:text-zinc-300"
           />
         </div>
         <div className="px-4 pb-3 flex items-center justify-end space-x-2">
           <button
             onClick={handleSave}
-            className="px-4 py-1.5 rounded-full bg-[#ccff00] text-black text-[9px] font-black uppercase tracking-widest hover:scale-105 transition-all shadow-sm"
+            className="px-4 py-1.5 rounded-full bg-white text-black border border-black text-[9px] font-black uppercase tracking-widest hover:scale-105 transition-all"
           >
             Done
           </button>

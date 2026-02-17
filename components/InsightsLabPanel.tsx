@@ -6,6 +6,7 @@ import { ChatMessage, DetailLevel, Heading, UploadedFile, DocChangeEvent } from 
 import { DEFAULT_STYLING } from '../utils/ai';
 import DocumentEditorModal, { DocumentEditorHandle } from './DocumentEditorModal';
 import { UnsavedChangesDialog, DocumentChangeNotice } from './Dialogs';
+import { isNameTaken } from '../utils/naming';
 
 interface InsightsLabPanelProps {
   messages: ChatMessage[];
@@ -96,6 +97,7 @@ const InsightsLabPanel = forwardRef<InsightsLabPanelHandle, InsightsLabPanelProp
   const kebabBtnRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
   const [renamingDocId, setRenamingDocId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
+  const [renameError, setRenameError] = useState('');
   const [showCopyMoveSubmenu, setShowCopyMoveSubmenu] = useState(false);
   const [newNuggetName, setNewNuggetName] = useState('');
   const [confirmRemoveDocId, setConfirmRemoveDocId] = useState<string | null>(null);
@@ -134,12 +136,26 @@ const InsightsLabPanel = forwardRef<InsightsLabPanelHandle, InsightsLabPanelProp
   }, [renamingDocId]);
 
   const commitRename = useCallback(() => {
-    if (renamingDocId && renameValue.trim() && onRenameDocument) {
-      onRenameDocument(renamingDocId, renameValue.trim());
+    if (!renamingDocId || !renameValue.trim()) {
+      setRenamingDocId(null);
+      setRenameValue('');
+      setRenameError('');
+      return;
     }
+    const trimmed = renameValue.trim();
+    const currentDoc = documents.find(d => d.id === renamingDocId);
+    if (currentDoc && trimmed !== currentDoc.name) {
+      const siblingNames = documents.map(d => d.name);
+      if (isNameTaken(trimmed, siblingNames, currentDoc.name)) {
+        setRenameError('A document with this name already exists');
+        return;
+      }
+    }
+    if (onRenameDocument) onRenameDocument(renamingDocId, trimmed);
     setRenamingDocId(null);
     setRenameValue('');
-  }, [renamingDocId, renameValue, onRenameDocument]);
+    setRenameError('');
+  }, [renamingDocId, renameValue, onRenameDocument, documents]);
 
   // ── Unsaved-changes gating ──
   // When the user tries to navigate away from a dirty editor, we stash the intended
@@ -352,42 +368,49 @@ const InsightsLabPanel = forwardRef<InsightsLabPanelHandle, InsightsLabPanelProp
   return (
     <div style={widthPercent ? { width: `${widthPercent}%` } : undefined} className="shrink-0 flex flex-col min-w-0 bg-white">
       {/* Header */}
-      <div className="shrink-0 h-[36px] flex items-center justify-center px-5">
+      <div className="shrink-0 flex flex-col items-center justify-center px-5 pt-2 pb-1">
         <span className="text-[17px] tracking-tight text-zinc-900">
           <span className="font-light italic">insight</span><span className="font-semibold not-italic">lab</span>
         </span>
+        {documents.length > 0 && (
+          <p className="text-[9px] text-zinc-400 mt-0.5 text-center">Generate content using <span className="font-semibold text-zinc-500">CHAT</span> agent or directly from the <span className="font-semibold text-zinc-500">SOURCES</span> agent</p>
+        )}
       </div>
 
       {/* ─── Toolbar ─── */}
-      <div className="group shrink-0">
-        <div className="px-5 h-[36px] flex items-center justify-center">
-          <div className="flex items-center gap-0.5 glass-toolbar rounded-full px-0.5 h-8 shadow-[inset_0_2px_4px_rgba(0,0,0,0.15)] border border-zinc-200">
-            {/* Chat/Sources toggle */}
-            <button
-              onClick={() => gatedAction(() => setViewMode('chat'))}
-              title="Show chat"
-              className={`h-7 px-2.5 rounded-full flex items-center justify-center text-[10px] font-medium uppercase tracking-wider transition-all duration-200 active:scale-90 ${viewMode === 'chat' ? 'bg-zinc-900 text-white' : 'text-zinc-500 hover:text-zinc-900 hover:bg-zinc-100'}`}
-            >
-              Chat
-            </button>
-            <button
-              onClick={() => setViewMode('content')}
-              title="Show sources"
-              className={`h-7 px-2.5 rounded-full flex items-center justify-center text-[10px] font-medium uppercase tracking-wider transition-all duration-200 active:scale-90 ${viewMode === 'content' ? 'bg-zinc-900 text-white' : 'text-zinc-500 hover:text-zinc-900 hover:bg-zinc-100'}`}
-            >
-              Sources
-            </button>
-          </div>
+      <div className="shrink-0">
+        <div className="px-5 h-[32px] flex items-center justify-center gap-0">
+          <button
+            onClick={() => gatedAction(() => setViewMode('chat'))}
+            title="Show chat"
+            className={`h-7 px-2.5 text-[11px] flex items-center justify-center cursor-pointer ${
+              viewMode === 'chat'
+                ? 'rounded-[14px] font-bold text-zinc-900 border-2 border-black bg-zinc-100'
+                : 'rounded-[6px] hover:rounded-[14px] font-medium border border-black text-zinc-500 hover:text-zinc-800 hover:bg-zinc-50'
+            }`}
+            style={{ transition: 'border-radius 200ms ease, background-color 150ms ease, color 150ms ease' }}
+          >
+            Chat
+          </button>
+          <button
+            onClick={() => setViewMode('content')}
+            title="Show sources"
+            className={`h-7 px-2.5 text-[11px] flex items-center justify-center cursor-pointer ${
+              viewMode === 'content'
+                ? 'rounded-[14px] font-bold text-zinc-900 border-2 border-black bg-zinc-100'
+                : 'rounded-[6px] hover:rounded-[14px] font-medium border border-black text-zinc-500 hover:text-zinc-800 hover:bg-zinc-50'
+            }`}
+            style={{ transition: 'border-radius 200ms ease, background-color 150ms ease, color 150ms ease' }}
+          >
+            Sources
+          </button>
         </div>
-        {documents.length > 0 && (
-          <p className="text-[10px] italic text-zinc-400 px-4 pt-1 pb-2 text-center opacity-0 group-hover:opacity-100 transition-opacity duration-200">Generate content using <span className="font-semibold not-italic text-zinc-500">CHAT</span> agent or directly from the <span className="font-semibold not-italic text-zinc-500">SOURCES</span> agent</p>
-        )}
       </div>
 
       {/* ─── Document tabs — always visible ─── */}
       <>
         {/* Document tabs */}
-        <div className="shrink-0 flex items-start gap-0.5 px-4 pt-1 pb-1 border-y border-zinc-100">
+        <div className="shrink-0 flex items-start gap-0 px-4 pt-1 pb-1 border-y border-zinc-100">
           {/* Upload button — stays fixed on the left */}
           {onUploadDocuments && (
             <div className="shrink-0 flex items-center gap-0.5">
@@ -419,7 +442,7 @@ const InsightsLabPanel = forwardRef<InsightsLabPanelHandle, InsightsLabPanelProp
             </div>
           )}
           {/* Document tab chips — wrap within their own container so rows align left */}
-          <div className="flex flex-wrap items-center gap-0.5 min-w-0">
+          <div className="flex flex-wrap items-center gap-0 min-w-0">
             {documents.length === 0 && (
               <span className="text-[11px] text-zinc-400 font-light italic ml-1 py-1.5">Upload a document or copy/move documents from other nuggets</span>
             )}
@@ -431,11 +454,12 @@ const InsightsLabPanel = forwardRef<InsightsLabPanelHandle, InsightsLabPanelProp
                 <div
                   key={doc.id}
                   data-doc-id={doc.id}
-                  className={`relative shrink-0 h-7 px-2 rounded-lg text-[11px] transition-all duration-150 max-w-[200px] flex items-center gap-1.5 cursor-pointer border ${
+                  className={`relative shrink-0 h-7 px-2 text-[11px] max-w-[200px] flex items-center gap-1.5 cursor-pointer border ${
                     isActive
-                      ? 'font-bold text-zinc-900 border-zinc-400 bg-zinc-100'
-                      : `font-medium border-transparent hover:bg-zinc-100 ${isEnabled ? 'text-zinc-500 hover:text-zinc-800' : 'text-zinc-300'}`
+                      ? 'rounded-[14px] font-bold text-zinc-900 border-zinc-900 bg-zinc-100'
+                      : `rounded-[6px] hover:rounded-[14px] font-medium border-black hover:bg-zinc-50 ${isEnabled ? 'text-zinc-500 hover:text-zinc-800' : 'text-zinc-300'}`
                   }`}
+                  style={{ transition: 'border-radius 200ms ease, background-color 150ms ease, color 150ms ease' }}
                   onClick={() => { if (doc.id !== activeDocTab && !isRenaming) gatedAction(() => setActiveDocTab(doc.id)); }}
                   title={doc.name}
                   onMouseEnter={() => {
@@ -471,18 +495,25 @@ const InsightsLabPanel = forwardRef<InsightsLabPanelHandle, InsightsLabPanelProp
 
                   {/* Name or inline rename input */}
                   {isRenaming ? (
-                    <input
-                      ref={renameInputRef}
-                      value={renameValue}
-                      onChange={(e) => setRenameValue(e.target.value)}
-                      onBlur={commitRename}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') commitRename();
-                        if (e.key === 'Escape') { setRenamingDocId(null); setRenameValue(''); }
-                      }}
-                      onClick={(e) => e.stopPropagation()}
-                      className="w-full min-w-[60px] bg-transparent outline-none text-[11px] font-medium text-zinc-900 border-b border-zinc-400"
-                    />
+                    <div className="relative flex-1 min-w-[60px]">
+                      <input
+                        ref={renameInputRef}
+                        value={renameValue}
+                        onChange={(e) => { setRenameValue(e.target.value); setRenameError(''); }}
+                        onBlur={commitRename}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') commitRename();
+                          if (e.key === 'Escape') { setRenamingDocId(null); setRenameValue(''); setRenameError(''); }
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                        className={`w-full bg-transparent outline-none text-[11px] font-medium text-zinc-900 border-b ${renameError ? 'border-red-400' : 'border-zinc-400'}`}
+                      />
+                      {renameError && (
+                        <div className="absolute left-0 top-full mt-1 bg-white border border-red-200 rounded px-2 py-1 text-[9px] text-red-500 whitespace-nowrap z-50 shadow-sm">
+                          {renameError}
+                        </div>
+                      )}
+                    </div>
                   ) : (
                     <>
                       <span className="truncate">{doc.name}</span>
@@ -512,8 +543,8 @@ const InsightsLabPanel = forwardRef<InsightsLabPanelHandle, InsightsLabPanelProp
           {kebabDocId && createPortal(
             <div
               ref={kebabMenuRef}
-              className="fixed z-[130] min-w-[120px] bg-white rounded-xl border border-zinc-200 py-1 animate-in fade-in zoom-in-95 duration-100"
-              style={{ top: kebabPos.y, left: kebabPos.x, transform: 'translateX(-100%)', boxShadow: '0 8px 30px rgba(0,0,0,0.12), 0 2px 8px rgba(0,0,0,0.08)' }}
+              className="fixed z-[130] min-w-[120px] bg-white rounded-[6px] border border-black py-1 animate-in fade-in zoom-in-95 duration-100"
+              style={{ top: kebabPos.y, left: kebabPos.x, transform: 'translateX(-100%)' }}
               onMouseLeave={(e) => {
                 if (kebabMode === 'locked') return;
                 // Check if moving back to the doc tab chip
@@ -530,7 +561,7 @@ const InsightsLabPanel = forwardRef<InsightsLabPanelHandle, InsightsLabPanelProp
                   setKebabDocId(null);
                   if (doc) { setRenamingDocId(docId); setRenameValue(doc.name); }
                 }}
-                className="w-full text-left px-3 py-1.5 text-[11px] text-zinc-700 hover:bg-zinc-50 transition-colors flex items-center gap-2"
+                className="w-full text-left px-3 py-1.5 text-[11px] text-black hover:bg-zinc-50 transition-colors flex items-center gap-2"
               >
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-zinc-400">
                   <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
@@ -552,7 +583,7 @@ const InsightsLabPanel = forwardRef<InsightsLabPanelHandle, InsightsLabPanelProp
                         setKebabDocId(null);
                       }
                     }}
-                    className="w-full text-left px-3 py-1.5 text-[11px] text-zinc-700 hover:bg-zinc-50 transition-colors flex items-center justify-between"
+                    className="w-full text-left px-3 py-1.5 text-[11px] text-black hover:bg-zinc-50 transition-colors flex items-center justify-between"
                   >
                     <span className="flex items-center gap-2">
                       <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-zinc-400">
@@ -570,8 +601,7 @@ const InsightsLabPanel = forwardRef<InsightsLabPanelHandle, InsightsLabPanelProp
                   {/* Nugget list submenu — appears on hover, to the right, slightly lower */}
                   {showCopyMoveSubmenu && otherNuggets && otherNuggets.length > 0 && (
                     <div
-                      className="absolute left-full top-0 mt-4 ml-1 w-[220px] bg-white rounded-xl border border-zinc-200 py-1 z-[140]"
-                      style={{ boxShadow: '0 8px 30px rgba(0,0,0,0.12), 0 2px 8px rgba(0,0,0,0.08)' }}
+                      className="absolute left-full top-0 mt-4 ml-1 w-[220px] bg-white rounded-[6px] border border-black py-1 z-[140]"
                     >
                       <div className="px-3 pb-1 border-b border-zinc-100 mb-1">
                         <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400">Send to nugget</span>
@@ -592,7 +622,7 @@ const InsightsLabPanel = forwardRef<InsightsLabPanelHandle, InsightsLabPanelProp
                                 pg.nuggets.map(n => (
                                   <div key={n.id} className="pl-5 pr-2 py-1 flex items-center gap-1.5 hover:bg-zinc-50 rounded-lg mx-1 group">
                                     <div className="w-1.5 h-1.5 rounded-full bg-acid-lime shrink-0" />
-                                    <span className="flex-1 text-[11px] text-zinc-700 truncate" title={n.name}>{n.name}</span>
+                                    <span className="flex-1 text-[11px] text-black truncate" title={n.name}>{n.name}</span>
                                     <div className="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
                                       <button
                                         onClick={() => {
@@ -600,7 +630,7 @@ const InsightsLabPanel = forwardRef<InsightsLabPanelHandle, InsightsLabPanelProp
                                           setKebabDocId(null);
                                           onCopyMoveDocument?.(docId, n.id, 'copy');
                                         }}
-                                        className="px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-zinc-500 bg-zinc-100 hover:bg-zinc-200 rounded transition-colors"
+                                        className="px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-black bg-zinc-100 hover:bg-zinc-200 rounded transition-colors"
                                       >
                                         Copy
                                       </button>
@@ -610,7 +640,7 @@ const InsightsLabPanel = forwardRef<InsightsLabPanelHandle, InsightsLabPanelProp
                                           setKebabDocId(null);
                                           onCopyMoveDocument?.(docId, n.id, 'move');
                                         }}
-                                        className="px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-zinc-500 bg-zinc-100 hover:bg-zinc-200 rounded transition-colors"
+                                        className="px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-black bg-zinc-100 hover:bg-zinc-200 rounded transition-colors"
                                       >
                                         Move
                                       </button>
@@ -624,7 +654,7 @@ const InsightsLabPanel = forwardRef<InsightsLabPanelHandle, InsightsLabPanelProp
                           otherNuggets.map(n => (
                             <div key={n.id} className="px-2 py-1 flex items-center gap-1.5 hover:bg-zinc-50 rounded-lg mx-1 group">
                               <div className="w-1.5 h-1.5 rounded-full bg-acid-lime shrink-0" />
-                              <span className="flex-1 text-[11px] text-zinc-700 truncate" title={n.name}>{n.name}</span>
+                              <span className="flex-1 text-[11px] text-black truncate" title={n.name}>{n.name}</span>
                               <div className="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
                                 <button
                                   onClick={() => {
@@ -632,7 +662,7 @@ const InsightsLabPanel = forwardRef<InsightsLabPanelHandle, InsightsLabPanelProp
                                     setKebabDocId(null);
                                     onCopyMoveDocument?.(docId, n.id, 'copy');
                                   }}
-                                  className="px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-zinc-500 bg-zinc-100 hover:bg-zinc-200 rounded transition-colors"
+                                  className="px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-black bg-zinc-100 hover:bg-zinc-200 rounded transition-colors"
                                 >
                                   Copy
                                 </button>
@@ -642,7 +672,7 @@ const InsightsLabPanel = forwardRef<InsightsLabPanelHandle, InsightsLabPanelProp
                                     setKebabDocId(null);
                                     onCopyMoveDocument?.(docId, n.id, 'move');
                                   }}
-                                  className="px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-zinc-500 bg-zinc-100 hover:bg-zinc-200 rounded transition-colors"
+                                  className="px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-black bg-zinc-100 hover:bg-zinc-200 rounded transition-colors"
                                 >
                                   Move
                                 </button>
@@ -669,7 +699,7 @@ const InsightsLabPanel = forwardRef<InsightsLabPanelHandle, InsightsLabPanelProp
                     URL.revokeObjectURL(url);
                   }
                 }}
-                className="w-full text-left px-3 py-1.5 text-[11px] text-zinc-700 hover:bg-zinc-50 transition-colors flex items-center gap-2"
+                className="w-full text-left px-3 py-1.5 text-[11px] text-black hover:bg-zinc-50 transition-colors flex items-center gap-2"
               >
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-zinc-400">
                   <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" />
@@ -712,22 +742,31 @@ const InsightsLabPanel = forwardRef<InsightsLabPanelHandle, InsightsLabPanelProp
                   </div>
                   <h3 className="text-sm font-semibold text-zinc-900 tracking-tight mb-1">No Other Nuggets</h3>
                   <p className="text-[13px] text-zinc-400 mt-1">Create a new nugget to copy this document to.</p>
-                  <input
-                    type="text"
-                    value={newNuggetName}
-                    onChange={(e) => setNewNuggetName(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && newNuggetName.trim() && onCreateNuggetWithDoc) {
-                        const docId = noNuggetsModalDocId;
-                        setNoNuggetsModalDocId(null);
-                        setNewNuggetName('');
-                        onCreateNuggetWithDoc(newNuggetName.trim(), docId);
-                      }
-                    }}
-                    placeholder="Nugget name"
-                    autoFocus
-                    className="mt-3 w-full px-3 py-2 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-zinc-300 focus:border-zinc-400 transition-all placeholder:text-zinc-300"
-                  />
+                  {(() => {
+                    const allNuggetNames = (otherNuggets || []).map(n => n.name);
+                    const nameConflict = isNameTaken(newNuggetName.trim(), allNuggetNames);
+                    return (
+                      <>
+                        <input
+                          type="text"
+                          value={newNuggetName}
+                          onChange={(e) => setNewNuggetName(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' && newNuggetName.trim() && !nameConflict && onCreateNuggetWithDoc) {
+                              const docId = noNuggetsModalDocId;
+                              setNoNuggetsModalDocId(null);
+                              setNewNuggetName('');
+                              onCreateNuggetWithDoc(newNuggetName.trim(), docId);
+                            }
+                          }}
+                          placeholder="Nugget name"
+                          autoFocus
+                          className={`mt-3 w-full px-3 py-2 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-zinc-300 transition-all placeholder:text-zinc-300 ${nameConflict ? 'border-red-300 focus:border-red-400' : 'border-zinc-200 focus:border-zinc-400'}`}
+                        />
+                        {nameConflict && <p className="text-[10px] text-red-500 mt-1">A nugget with this name already exists</p>}
+                      </>
+                    );
+                  })()}
                 </div>
                 <div className="px-6 pb-5 pt-1 flex items-center justify-center gap-2">
                   <button
@@ -736,25 +775,29 @@ const InsightsLabPanel = forwardRef<InsightsLabPanelHandle, InsightsLabPanelProp
                   >
                     Cancel
                   </button>
-                  {onCreateNuggetWithDoc && (
-                    <button
-                      onClick={() => {
-                        if (!newNuggetName.trim()) return;
-                        const docId = noNuggetsModalDocId;
-                        setNoNuggetsModalDocId(null);
-                        setNewNuggetName('');
-                        onCreateNuggetWithDoc(newNuggetName.trim(), docId);
-                      }}
-                      disabled={!newNuggetName.trim()}
-                      className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
-                        newNuggetName.trim()
-                          ? 'bg-zinc-900 text-white hover:bg-zinc-800'
-                          : 'bg-zinc-200 text-zinc-400 cursor-not-allowed'
-                      }`}
-                    >
-                      New Nugget
-                    </button>
-                  )}
+                  {onCreateNuggetWithDoc && (() => {
+                    const nameConflict = isNameTaken(newNuggetName.trim(), (otherNuggets || []).map(n => n.name));
+                    const canCreate = !!newNuggetName.trim() && !nameConflict;
+                    return (
+                      <button
+                        onClick={() => {
+                          if (!canCreate) return;
+                          const docId = noNuggetsModalDocId;
+                          setNoNuggetsModalDocId(null);
+                          setNewNuggetName('');
+                          onCreateNuggetWithDoc(newNuggetName.trim(), docId);
+                        }}
+                        disabled={!canCreate}
+                        className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
+                          canCreate
+                            ? 'bg-zinc-900 text-white hover:bg-zinc-800'
+                            : 'bg-zinc-200 text-zinc-400 cursor-not-allowed'
+                        }`}
+                      >
+                        New Nugget
+                      </button>
+                    );
+                  })()}
                 </div>
               </div>
             </div>,
@@ -1174,17 +1217,16 @@ const InsightsLabPanel = forwardRef<InsightsLabPanelHandle, InsightsLabPanelProp
       {showSendMenu && createPortal(
         <div
           ref={sendMenuRef}
-          className="fixed min-w-[180px] bg-white rounded-xl border border-zinc-200 py-1 z-[200]"
+          className="fixed min-w-[180px] bg-white rounded-[6px] border border-black py-1 z-[200]"
           style={{
             right: Math.max(8, window.innerWidth - sendMenuPos.x),
             bottom: Math.max(8, window.innerHeight - sendMenuPos.y + 6),
-            boxShadow: '0 8px 30px rgba(0,0,0,0.12), 0 2px 8px rgba(0,0,0,0.08)',
           }}
         >
           {/* Send Message option */}
           <button
             onClick={() => { setShowSendMenu(false); setShowCardSubmenu(false); handleSend(); }}
-            className="w-full text-left px-3 py-2 text-[11px] text-zinc-700 hover:bg-zinc-50 transition-colors flex items-center gap-2"
+            className="w-full text-left px-3 py-2 text-[11px] text-black hover:bg-zinc-50 transition-colors flex items-center gap-2"
           >
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-zinc-400">
               <path d="M6 12L3.269 3.126A59.768 59.768 0 0 1 21.485 12 59.77 59.77 0 0 1 3.27 20.876L5.999 12Zm0 0h7.5" />
@@ -1201,7 +1243,7 @@ const InsightsLabPanel = forwardRef<InsightsLabPanelHandle, InsightsLabPanelProp
             onMouseLeave={() => setShowCardSubmenu(false)}
           >
             <button
-              className="w-full text-left px-3 py-2 text-[11px] font-semibold text-zinc-700 hover:bg-zinc-50 transition-colors flex items-center justify-between"
+              className="w-full text-left px-3 py-2 text-[11px] font-semibold text-black hover:bg-zinc-50 transition-colors flex items-center justify-between"
             >
               <span className="flex items-center gap-2">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-zinc-400">
@@ -1217,8 +1259,7 @@ const InsightsLabPanel = forwardRef<InsightsLabPanelHandle, InsightsLabPanelProp
             {/* Detail level submenu — appears on hover, grows upward */}
             {showCardSubmenu && (
               <div
-                className="absolute right-full bottom-0 mr-1 min-w-[140px] bg-white rounded-xl border border-zinc-200 py-1 z-[201]"
-                style={{ boxShadow: '0 8px 30px rgba(0,0,0,0.12), 0 2px 8px rgba(0,0,0,0.08)' }}
+                className="absolute right-full bottom-0 mr-1 min-w-[140px] bg-white rounded-[6px] border border-black py-1 z-[201]"
               >
                 {([
                   { level: 'Executive' as DetailLevel, label: 'Executive', desc: '70-100 words' },
@@ -1228,7 +1269,7 @@ const InsightsLabPanel = forwardRef<InsightsLabPanelHandle, InsightsLabPanelProp
                   <button
                     key={opt.level}
                     onClick={() => handleSendAsCard(opt.level)}
-                    className="w-full text-left px-3 py-2 text-[11px] text-zinc-700 hover:bg-zinc-50 transition-colors flex items-center justify-between gap-3"
+                    className="w-full text-left px-3 py-2 text-[11px] text-black hover:bg-zinc-50 transition-colors flex items-center justify-between gap-3"
                   >
                     <span className="font-medium">{opt.label}</span>
                     <span className="text-[9px] text-zinc-400">{opt.desc}</span>

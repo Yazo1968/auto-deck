@@ -1,5 +1,5 @@
 
-import React from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Heading, DocChangeEvent } from '../types';
 
@@ -48,36 +48,94 @@ interface UnsavedChangesDialogProps {
   onSave: () => void;
   onDiscard: () => void;
   onCancel: () => void;
+  title?: string;
+  description?: string;
+  saveLabel?: string;
+  discardLabel?: string;
+  /** When provided, shows a name input field. onSave receives the name via onSaveWithName instead. */
+  nameInput?: {
+    defaultName: string;
+    existingNames: string[];
+    onSaveWithName: (name: string) => void;
+  };
 }
 
-export const UnsavedChangesDialog: React.FC<UnsavedChangesDialogProps> = ({ onSave, onDiscard, onCancel }) => {
+export const UnsavedChangesDialog: React.FC<UnsavedChangesDialogProps> = ({ onSave, onDiscard, onCancel, title, description, saveLabel, discardLabel, nameInput }) => {
+  const [cardName, setCardName] = useState(nameInput?.defaultName || '');
+  const [nameError, setNameError] = useState('');
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (nameInput) {
+      setTimeout(() => {
+        inputRef.current?.focus();
+        inputRef.current?.select();
+      }, 100);
+    }
+  }, [nameInput]);
+
+  const handleSave = () => {
+    if (nameInput) {
+      const trimmed = cardName.trim();
+      if (!trimmed) {
+        setNameError('Name cannot be empty');
+        return;
+      }
+      if (nameInput.existingNames.some(n => n.toLowerCase() === trimmed.toLowerCase())) {
+        setNameError('A card with this name already exists');
+        return;
+      }
+      setNameError('');
+      nameInput.onSaveWithName(trimmed);
+    } else {
+      onSave();
+    }
+  };
+
   return createPortal(
     <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/50 animate-in fade-in duration-300">
       <div className="w-full max-w-sm bg-white rounded-[40px] p-10 shadow-2xl border border-zinc-100 animate-in zoom-in-95 duration-300">
         <div className="space-y-6 text-center">
-          <div className="w-16 h-16 bg-amber-50 rounded-full flex items-center justify-center mx-auto">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#d97706" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <div className="w-16 h-16 flex items-center justify-center mx-auto">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-black">
               <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
             </svg>
           </div>
           <div className="space-y-2">
-            <h3 className="text-lg font-black tracking-tight text-zinc-900">Unsaved changes</h3>
+            <h3 className="text-lg font-black tracking-tight text-zinc-900">{title || 'Unsaved changes'}</h3>
             <p className="text-sm text-zinc-500 font-light leading-relaxed">
-              You have unsaved edits. Save or discard them to continue.
+              {description || 'You have unsaved edits. Save or discard them to continue.'}
             </p>
           </div>
+          {nameInput && (
+            <div className="text-left space-y-1.5">
+              <label className="text-[9px] font-black uppercase tracking-[0.15em] text-zinc-500">Card Name</label>
+              <input
+                ref={inputRef}
+                type="text"
+                value={cardName}
+                onChange={(e) => { setCardName(e.target.value); setNameError(''); }}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleSave(); }}
+                placeholder="Enter a name for this card"
+                className={`w-full px-4 py-3 rounded-2xl border ${nameError ? 'border-red-300' : 'border-zinc-200'} bg-zinc-50 text-sm text-zinc-900 focus:outline-none focus:border-black transition-colors placeholder:text-zinc-300`}
+              />
+              {nameError && (
+                <p className="text-[10px] text-red-500 font-medium">{nameError}</p>
+              )}
+            </div>
+          )}
           <div className="flex flex-col space-y-3 pt-4">
             <button
-              onClick={onSave}
-              className="w-full py-4 rounded-full bg-acid-lime text-black text-[10px] font-black uppercase tracking-widest shadow-lg shadow-acid-lime/20 hover:scale-[1.02] transition-all"
+              onClick={handleSave}
+              className="w-full py-4 rounded-full bg-black text-white text-[10px] font-black uppercase tracking-widest hover:scale-[1.02] transition-all"
             >
-              Save Changes
+              {saveLabel || 'Save Changes'}
             </button>
             <button
               onClick={onDiscard}
               className="w-full py-4 rounded-full bg-zinc-50 text-zinc-500 text-[10px] font-black uppercase tracking-widest hover:bg-zinc-100 transition-all"
             >
-              Discard Changes
+              {discardLabel || 'Discard Changes'}
             </button>
             <button
               onClick={onCancel}

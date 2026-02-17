@@ -272,9 +272,9 @@ const AnnotationToolbar: React.FC<AnnotationToolbarProps> = ({
 
           {/* Text instruction popover */}
           {showTextPanel && (
-            <div className="absolute bottom-full mb-3 left-1/2 -translate-x-1/2 bg-white rounded-2xl shadow-2xl border border-zinc-100 p-3 animate-in fade-in zoom-in-95 duration-200 w-[280px]">
+            <div className="absolute bottom-full mb-3 left-1/2 -translate-x-1/2 bg-white rounded-[6px] border border-black p-3 animate-in fade-in zoom-in-95 duration-200 w-[280px]">
               <div className="flex items-center justify-between mb-2 px-1">
-                <div className="text-[11px] font-medium uppercase tracking-[0.2em] text-zinc-400">Instruction</div>
+                <div className="text-[11px] font-medium uppercase tracking-[0.2em] text-black">Instruction</div>
                 {hasGlobalText && (
                   <button
                     onClick={() => onGlobalInstructionChange('')}
@@ -290,7 +290,7 @@ const AnnotationToolbar: React.FC<AnnotationToolbarProps> = ({
                 onChange={(e) => onGlobalInstructionChange(e.target.value)}
                 placeholder="Describe changes to apply globally..."
                 rows={3}
-                className="w-full text-xs text-zinc-700 bg-zinc-50 rounded-xl px-3 py-2 border border-zinc-200 focus:outline-none focus:border-zinc-400 resize-none placeholder:text-zinc-300"
+                className="w-full text-xs text-zinc-700 bg-zinc-50 rounded-xl px-3 py-2 border border-black focus:outline-none resize-none placeholder:text-zinc-300"
                 onKeyDown={(e) => {
                   // Prevent Escape from bubbling to annotation workbench
                   if (e.key === 'Escape') {
@@ -321,13 +321,12 @@ const AnnotationToolbar: React.FC<AnnotationToolbarProps> = ({
         </button>
         {showDeleteMenu && (
           <div
-            className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 bg-white rounded-lg border border-zinc-200 py-1 min-w-[180px] z-[140] animate-in fade-in zoom-in-95 duration-150"
-            style={{ boxShadow: '0 8px 30px rgba(0,0,0,0.12), 0 2px 8px rgba(0,0,0,0.08)' }}
+            className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 bg-white rounded-[6px] border border-black py-1 min-w-[180px] z-[140] animate-in fade-in zoom-in-95 duration-150"
           >
             <button
               onClick={() => { onDeleteSelected?.(); setShowDeleteMenu(false); }}
               disabled={!hasSelection}
-              className="w-full text-left px-3 py-1.5 text-[11px] text-zinc-700 hover:bg-zinc-50 transition-colors flex items-center gap-2 disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+              className="w-full text-left px-3 py-1.5 text-[11px] text-black hover:bg-zinc-50 transition-colors flex items-center gap-2 disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent"
             >
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-zinc-400">
                 <path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>
@@ -367,8 +366,8 @@ const AnnotationToolbar: React.FC<AnnotationToolbarProps> = ({
 
           {/* Color picker popover */}
           {showColorPicker && (
-            <div className="absolute bottom-full mb-3 left-1/2 -translate-x-1/2 bg-white rounded-2xl shadow-2xl border border-zinc-100 p-3 animate-in fade-in zoom-in-95 duration-200">
-              <div className="text-[11px] font-medium uppercase tracking-[0.2em] text-zinc-400 mb-2 px-1">Color</div>
+            <div className="absolute bottom-full mb-3 left-1/2 -translate-x-1/2 bg-white rounded-[6px] border border-black p-3 animate-in fade-in zoom-in-95 duration-200">
+              <div className="text-[11px] font-medium uppercase tracking-[0.2em] text-black mb-2 px-1">Color</div>
               <div className="flex items-center space-x-2">
                 {paletteColors.map((color) => (
                   <button

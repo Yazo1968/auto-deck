@@ -17,6 +17,7 @@ import { useInsightsLab } from './hooks/useInsightsLab';
 import { callClaude } from './utils/ai';
 import { buildContentPrompt } from './utils/prompts/contentGeneration';
 import { createPlaceholderDocument, processFileToDocument } from './utils/fileProcessing';
+import { getUniqueName } from './utils/naming';
 
 const App: React.FC = () => {
   const {
@@ -73,6 +74,7 @@ const App: React.FC = () => {
   const [editingCardContent, setEditingCardContent] = useState<{
     headingId: string;
     level: DetailLevel;
+    isCustomCard?: boolean;
   } | null>(null);
 
   // ── Nugget's owned documents (per-nugget, no shared library) ──
@@ -95,15 +97,16 @@ const App: React.FC = () => {
   // Handle project creation
   const handleCreateProject = useCallback(() => {
     const now = Date.now();
+    const existingProjectNames = projects.map(p => p.name);
     const project: Project = {
       id: `project-${now}-${Math.random().toString(36).substr(2, 9)}`,
-      name: 'New Project',
+      name: getUniqueName('New Project', existingProjectNames),
       nuggetIds: [],
       createdAt: now,
       lastModifiedAt: now,
     };
     addProject(project);
-  }, [addProject]);
+  }, [addProject, projects]);
 
   // Handle copying a nugget to another project (duplicate nugget)
   const handleCopyNuggetToProject = useCallback((nuggetId: string, targetProjectId: string) => {
@@ -111,10 +114,15 @@ const App: React.FC = () => {
     if (!nugget) return;
     const now = Date.now();
     const newNuggetId = `nugget-${now}-${Math.random().toString(36).substr(2, 9)}`;
+    // Get existing nugget names in the target project for dedup
+    const targetProject = projects.find(p => p.id === targetProjectId);
+    const targetNuggetNames = targetProject
+      ? targetProject.nuggetIds.map(nid => nuggets.find(n => n.id === nid)?.name || '').filter(Boolean)
+      : [];
     const copiedNugget: Nugget = {
       ...nugget,
       id: newNuggetId,
-      name: `${nugget.name} (copy)`,
+      name: getUniqueName(`${nugget.name} (copy)`, targetNuggetNames),
       documents: nugget.documents.map(d => ({ ...d, id: `doc-${Math.random().toString(36).substr(2, 9)}` })),
       headings: nugget.headings.map(h => ({ ...h, id: `heading-${Math.random().toString(36).substr(2, 9)}` })),
       messages: [...(nugget.messages || [])],
@@ -123,25 +131,39 @@ const App: React.FC = () => {
     };
     addNugget(copiedNugget);
     addNuggetToProject(targetProjectId, newNuggetId);
-  }, [nuggets, addNugget, addNuggetToProject]);
+  }, [nuggets, projects, addNugget, addNuggetToProject]);
 
   // Handle moving a nugget to another project (re-assign)
   const handleMoveNuggetToProject = useCallback((nuggetId: string, sourceProjectId: string, targetProjectId: string) => {
+    // Auto-rename if name collides in target project
+    const nugget = nuggets.find(n => n.id === nuggetId);
+    if (nugget) {
+      const targetProject = projects.find(p => p.id === targetProjectId);
+      const targetNuggetNames = targetProject
+        ? targetProject.nuggetIds.map(nid => nuggets.find(n => n.id === nid)?.name || '').filter(Boolean)
+        : [];
+      const uniqueName = getUniqueName(nugget.name, targetNuggetNames);
+      if (uniqueName !== nugget.name) {
+        updateNugget(nuggetId, n => ({ ...n, name: uniqueName, lastModifiedAt: Date.now() }));
+      }
+    }
     removeNuggetFromProject(sourceProjectId, nuggetId);
     addNuggetToProject(targetProjectId, nuggetId);
-  }, [removeNuggetFromProject, addNuggetToProject]);
+  }, [nuggets, projects, removeNuggetFromProject, addNuggetToProject, updateNugget]);
 
   // Handle creating a new project for a nugget (copy or move)
   // Inlined logic to avoid stale closure issues — creates the project with the nugget already assigned
   const handleCreateProjectForNugget = useCallback((nuggetId: string, projectName: string, mode: 'copy' | 'move', sourceProjectId: string) => {
     const now = Date.now();
     const newProjectId = `project-${now}-${Math.random().toString(36).substr(2, 9)}`;
+    // Auto-increment project name if it already exists
+    const uniqueProjectName = getUniqueName(projectName, projects.map(p => p.name));
 
     if (mode === 'move') {
       // Move: create project with the nuggetId already included, remove from source
       const newProject: Project = {
         id: newProjectId,
-        name: projectName,
+        name: uniqueProjectName,
         nuggetIds: [nuggetId],
         createdAt: now,
         lastModifiedAt: now,
@@ -172,7 +194,7 @@ const App: React.FC = () => {
       };
       const newProject: Project = {
         id: newProjectId,
-        name: projectName,
+        name: uniqueProjectName,
         nuggetIds: [newNuggetId],
         createdAt: now,
         lastModifiedAt: now,
@@ -180,16 +202,18 @@ const App: React.FC = () => {
       addNugget(copiedNugget);
       setProjects(prev => [...prev, newProject]);
     }
-  }, [nuggets, addNugget, setProjects]);
+  }, [nuggets, projects, addNugget, setProjects]);
 
   // Save card content as heading in insights nugget
   const handleSaveAsHeading = useCallback((message: ChatMessage, editedContent: string) => {
     if (!selectedNugget || selectedNugget.type !== 'insights') return;
     const content = editedContent || message.content;
 
-    // Extract title from first # heading line
+    // Extract title from first # heading line, auto-increment if duplicate
     const titleMatch = content.match(/^#\s+(.+)$/m);
-    const title = titleMatch ? titleMatch[1].trim() : 'Untitled Card';
+    const rawTitle = titleMatch ? titleMatch[1].trim() : 'Untitled Card';
+    const existingCardNames = selectedNugget.headings.map(h => h.text);
+    const title = getUniqueName(rawTitle, existingCardNames);
 
     // Remove the title line from content body
     const bodyContent = content.replace(/^#\s+.+\n*/, '').trim();
@@ -281,6 +305,63 @@ const App: React.FC = () => {
     });
   }, [selectedNugget, updateNugget, setInsightsSession]);
 
+  // Select a single heading exclusively (deselect all others)
+  const selectInsightsHeadingExclusive = useCallback((headingId: string) => {
+    if (!selectedNugget) return;
+    updateNugget(selectedNugget.id, n => ({
+      ...n,
+      headings: n.headings.map(h => ({ ...h, selected: h.id === headingId })),
+      lastModifiedAt: Date.now(),
+    }));
+    setInsightsSession(prev => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        headings: prev.headings.map(h => ({ ...h, selected: h.id === headingId })),
+      };
+    });
+  }, [selectedNugget, updateNugget, setInsightsSession]);
+
+  // Select a range of headings between two IDs (inclusive)
+  const selectInsightsHeadingRange = useCallback((fromId: string, toId: string) => {
+    if (!selectedNugget) return;
+    const headings = selectedNugget.headings || [];
+    const fromIdx = headings.findIndex(h => h.id === fromId);
+    const toIdx = headings.findIndex(h => h.id === toId);
+    if (fromIdx === -1 || toIdx === -1) return;
+    const minIdx = Math.min(fromIdx, toIdx);
+    const maxIdx = Math.max(fromIdx, toIdx);
+    updateNugget(selectedNugget.id, n => ({
+      ...n,
+      headings: n.headings.map((h, i) => ({ ...h, selected: i >= minIdx && i <= maxIdx })),
+      lastModifiedAt: Date.now(),
+    }));
+    setInsightsSession(prev => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        headings: prev.headings.map((h, i) => ({ ...h, selected: i >= minIdx && i <= maxIdx })),
+      };
+    });
+  }, [selectedNugget, updateNugget, setInsightsSession]);
+
+  // Deselect all insights headings
+  const deselectAllInsightsHeadings = useCallback(() => {
+    if (!selectedNugget) return;
+    updateNugget(selectedNugget.id, n => ({
+      ...n,
+      headings: n.headings.map(h => ({ ...h, selected: false })),
+      lastModifiedAt: Date.now(),
+    }));
+    setInsightsSession(prev => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        headings: prev.headings.map(h => ({ ...h, selected: false })),
+      };
+    });
+  }, [selectedNugget, updateNugget, setInsightsSession]);
+
   // Delete insights heading
   const deleteInsightsHeading = useCallback((headingId: string) => {
     if (!selectedNugget) return;
@@ -293,6 +374,22 @@ const App: React.FC = () => {
     setInsightsSession(prev => {
       if (!prev) return prev;
       return { ...prev, headings: prev.headings.filter(h => h.id !== headingId) };
+    });
+  }, [selectedNugget, updateNugget, setInsightsSession]);
+
+  // Delete selected insights headings (bulk)
+  const deleteSelectedInsightsHeadings = useCallback(() => {
+    if (!selectedNugget) return;
+    const selectedIds = new Set(selectedNugget.headings.filter(h => h.selected).map(h => h.id));
+    if (selectedIds.size === 0) return;
+    updateNugget(selectedNugget.id, n => ({
+      ...n,
+      headings: n.headings.filter(h => !selectedIds.has(h.id)),
+      lastModifiedAt: Date.now(),
+    }));
+    setInsightsSession(prev => {
+      if (!prev) return prev;
+      return { ...prev, headings: prev.headings.filter(h => !selectedIds.has(h.id)) };
     });
   }, [selectedNugget, updateNugget, setInsightsSession]);
 
@@ -578,8 +675,8 @@ const App: React.FC = () => {
       {editingCardContent && (() => {
         const heading = insightsSession?.headings?.find(h => h.id === editingCardContent.headingId)
           || selectedNugget?.headings?.find(h => h.id === editingCardContent.headingId);
-        const content = heading?.synthesisMap?.[editingCardContent.level] || '';
-        if (!content || !heading) return null;
+        if (!heading) return null;
+        const content = heading.synthesisMap?.[editingCardContent.level] || '';
         return (
           <DocumentEditorModal
             document={{ id: editingCardContent.headingId, name: heading.text, content } as UploadedFile}
@@ -589,9 +686,37 @@ const App: React.FC = () => {
                 synthesisMap: { ...(h.synthesisMap || {}), [editingCardContent.level]: newContent },
                 lastEditedAt: Date.now(),
               }));
-              setEditingCardContent(null);
             }}
             onClose={() => setEditingCardContent(null)}
+            isCustomCard={editingCardContent.isCustomCard}
+            existingCardNames={
+              editingCardContent.isCustomCard
+                ? (insightsSession?.headings || [])
+                    .filter(h => h.id !== editingCardContent.headingId)
+                    .map(h => h.text)
+                : undefined
+            }
+            onSaveCustomCard={(name) => {
+              // Rename the heading to the user-chosen name
+              updateNuggetHeading(editingCardContent.headingId, h => ({
+                ...h,
+                text: name,
+                lastEditedAt: Date.now(),
+              }));
+            }}
+            onDiscardCustomCard={() => {
+              // Remove the freshly created heading from nugget + insightsSession
+              const hId = editingCardContent.headingId;
+              if (selectedNugget) {
+                updateNugget(selectedNugget.id, n => ({
+                  ...n,
+                  headings: n.headings.filter(h => h.id !== hId),
+                  lastModifiedAt: Date.now(),
+                }));
+              }
+              setInsightsSession(prev => prev ? { ...prev, headings: prev.headings.filter(h => h.id !== hId) } : prev);
+              if (activeHeadingId === hId) setActiveHeadingId(null);
+            }}
           />
         );
       })()}
@@ -655,6 +780,17 @@ const App: React.FC = () => {
                     <span className="mx-1.5" />
                     <span className="font-semibold not-italic truncate">{selectedNugget.name}</span>
                   </div>
+                  <button
+                    onClick={() => { setSidebarWidth(230); setChatPanelPercent(40); }}
+                    className="absolute left-3 top-1/2 -translate-y-1/2 h-6 px-2.5 flex items-center gap-1.5 rounded-[6px] hover:rounded-[14px] border border-zinc-200 hover:border-black text-zinc-400 hover:text-black text-[9px] font-black uppercase tracking-[0.15em] cursor-pointer hover:bg-zinc-50"
+                    style={{ transition: 'border-radius 200ms ease, border-color 150ms ease, color 150ms ease, background-color 150ms ease' }}
+                    title="Reset panel widths to default"
+                  >
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <rect x="2" y="4" width="6" height="16" rx="1"/><rect x="9" y="4" width="6" height="16" rx="1"/><rect x="16" y="4" width="6" height="16" rx="1"/>
+                    </svg>
+                    Reset View
+                  </button>
                 </div>
               );
             })()}
@@ -667,41 +803,47 @@ const App: React.FC = () => {
             onDragOver={(e) => e.preventDefault()}
             onDrop={(e) => e.preventDefault()}
           >
-            <div className="px-5 h-[36px] flex items-center justify-center gap-2.5 shrink-0">
-              <span className="text-[17px] tracking-tight text-zinc-900"><span className="font-light italic">cards</span><span className="font-semibold not-italic">content</span></span>
+            {/* Header */}
+            <div className="shrink-0 flex flex-col items-center justify-center px-5 pt-2 pb-1">
+              <span className="text-[17px] tracking-tight text-zinc-900">
+                <span className="font-light italic">cards</span><span className="font-semibold not-italic">content</span>
+              </span>
+              <p className="text-[9px] text-zinc-400 mt-0.5 text-center">shift, ctrl/⌘ for multiple selection</p>
             </div>
-            {selectedNugget && (selectedNugget.headings?.length ?? 0) > 0 && (() => {
-              const headings = selectedNugget.headings || [];
-              const allSelected = headings.every(h => h.selected);
-              const someSelected = headings.some(h => h.selected) && !allSelected;
-              return (
-                <button
-                  onClick={toggleSelectAllInsightsHeadings}
-                  className="shrink-0 flex items-center gap-2 px-5 pb-1.5 group"
-                >
-                  <span className={`w-4 h-4 rounded flex items-center justify-center transition-colors ${
-                    allSelected
-                      ? 'bg-zinc-900 border border-zinc-900'
-                      : someSelected
-                        ? 'bg-zinc-400 border border-zinc-400'
-                        : 'bg-white border border-zinc-300 group-hover:border-zinc-400'
-                  }`}>
-                    {allSelected && (
-                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                        <polyline points="20 6 9 17 4 12" />
-                      </svg>
-                    )}
-                    {someSelected && (
-                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                        <line x1="5" y1="12" x2="19" y2="12" />
-                      </svg>
-                    )}
-                  </span>
-                  <span className="text-[11px] text-zinc-400 group-hover:text-zinc-600 transition-colors">Select all cards</span>
-                </button>
-              );
-            })()}
 
+            {/* Toolbar */}
+            <div className="shrink-0 border-b border-zinc-100">
+              <div className="px-5 h-[32px] flex items-center justify-center gap-0">
+                <button
+                  onClick={() => {
+                    if (!selectedNugget) return;
+                    const newId = crypto.randomUUID();
+                    const existingNames = selectedNugget.headings.map(h => h.text);
+                    const newHeading: Heading = {
+                      id: newId,
+                      level: 1,
+                      text: getUniqueName('Custom Card', existingNames),
+                      synthesisMap: { Standard: '' },
+                      createdAt: Date.now(),
+                      lastEditedAt: Date.now(),
+                    };
+                    // Add heading to nugget + insightsSession
+                    updateNugget(selectedNugget.id, n => ({
+                      ...n,
+                      headings: [...n.headings, newHeading],
+                      lastModifiedAt: Date.now(),
+                    }));
+                    setInsightsSession(prev => prev ? { ...prev, headings: [...prev.headings, newHeading] } : prev);
+                    setActiveHeadingId(newId);
+                    setEditingCardContent({ headingId: newId, level: 'Standard', isCustomCard: true });
+                  }}
+                  className="h-7 px-2.5 text-[11px] flex items-center justify-center cursor-pointer rounded-[6px] hover:rounded-[14px] font-medium border border-black text-zinc-500 hover:text-zinc-800 hover:bg-zinc-50"
+                  style={{ transition: 'border-radius 200ms ease, background-color 150ms ease, color 150ms ease' }}
+                >
+                  Custom Card
+                </button>
+              </div>
+            </div>
             {selectedNugget ? (
               <>
                 {/* Heading list */}
@@ -715,9 +857,91 @@ const App: React.FC = () => {
                       insightsLabRef.current?.switchToCardView();
                     }}
                     onToggleSelection={toggleInsightsHeadingSelection}
+                    onSelectExclusive={selectInsightsHeadingExclusive}
+                    onSelectRange={selectInsightsHeadingRange}
+                    onSelectAll={toggleSelectAllInsightsHeadings}
+                    onDeselectAll={deselectAllInsightsHeadings}
                     onDeleteHeading={deleteInsightsHeading}
+                    onDeleteSelectedHeadings={deleteSelectedInsightsHeadings}
                     onRenameHeading={renameInsightsHeading}
                     onEditHeading={editInsightsHeading}
+                    onCopyMoveHeading={(headingId, targetNuggetId, mode) => {
+                      if (!selectedNugget) return;
+                      const heading = selectedNugget.headings.find(h => h.id === headingId);
+                      if (!heading) return;
+                      const targetNugget = nuggets.find(n => n.id === targetNuggetId);
+                      const targetHeadingNames = targetNugget ? targetNugget.headings.map(h => h.text) : [];
+                      const uniqueName = getUniqueName(heading.text, targetHeadingNames);
+                      const now = Date.now();
+                      const newHeadingId = `heading-${Math.random().toString(36).substr(2, 9)}`;
+                      const copiedHeading: Heading = {
+                        ...heading,
+                        id: newHeadingId,
+                        text: uniqueName,
+                        selected: false,
+                        createdAt: now,
+                        lastEditedAt: now,
+                      };
+                      // Add to target nugget
+                      updateNugget(targetNuggetId, n => ({
+                        ...n,
+                        headings: [...n.headings, copiedHeading],
+                        lastModifiedAt: now,
+                      }));
+                      // If move, also remove from source nugget
+                      if (mode === 'move') {
+                        updateNugget(selectedNugget.id, n => ({
+                          ...n,
+                          headings: n.headings.filter(h => h.id !== headingId),
+                          lastModifiedAt: now,
+                        }));
+                        // If moved heading was active, clear active
+                        if (activeHeadingId === headingId) setActiveHeadingId(null);
+                      }
+                    }}
+                    otherNuggets={nuggets.filter(n => n.id !== selectedNugget?.id).map(n => ({ id: n.id, name: n.name }))}
+                    projectNuggets={projects.map(p => ({
+                      projectId: p.id,
+                      projectName: p.name,
+                      nuggets: p.nuggetIds
+                        .filter(nid => nid !== selectedNugget?.id)
+                        .map(nid => nuggets.find(n => n.id === nid))
+                        .filter((n): n is Nugget => !!n)
+                        .map(n => ({ id: n.id, name: n.name })),
+                    }))}
+                    onCreateNuggetForHeading={(nuggetName, headingId) => {
+                      if (!selectedNugget || !headingId) return;
+                      const heading = selectedNugget.headings.find(h => h.id === headingId);
+                      if (!heading) return;
+                      const sourceProject = projects.find(p => p.nuggetIds.includes(selectedNugget.id));
+                      const projectNuggetNames = sourceProject
+                        ? sourceProject.nuggetIds.map(nid => nuggets.find(n => n.id === nid)?.name || '').filter(Boolean)
+                        : nuggets.map(n => n.name);
+                      const uniqueNuggetName = getUniqueName(nuggetName, projectNuggetNames);
+                      const now = Date.now();
+                      const newHeadingId = `heading-${Math.random().toString(36).substr(2, 9)}`;
+                      const copiedHeading: Heading = {
+                        ...heading,
+                        id: newHeadingId,
+                        selected: false,
+                        createdAt: now,
+                        lastEditedAt: now,
+                      };
+                      const newNugget: Nugget = {
+                        id: `nugget-${Math.random().toString(36).substr(2, 9)}`,
+                        name: uniqueNuggetName,
+                        type: 'insights',
+                        documents: [],
+                        headings: [copiedHeading],
+                        messages: [],
+                        createdAt: now,
+                        lastModifiedAt: now,
+                      };
+                      addNugget(newNugget);
+                      if (sourceProject) {
+                        addNuggetToProject(sourceProject.id, newNugget.id);
+                      }
+                    }}
                   />
                 </div>
               </>
@@ -794,10 +1018,11 @@ const App: React.FC = () => {
                       // Create a new card heading with the synthesized content
                       const newHeadingId = `insight-${Math.random().toString(36).substr(2, 9)}`;
                       const activeDocNames = enabledDocs.map(d => d.name);
+                      const uniqueCardName = getUniqueName(headingText, selectedNugget.headings.map(h => h.text));
 
                       const newHeading: Heading = {
                         id: newHeadingId,
-                        text: headingText,
+                        text: uniqueCardName,
                         level: 1,
                         selected: false,
                         synthesisMap: { [detailLevel]: synthesizedText },
@@ -838,9 +1063,13 @@ const App: React.FC = () => {
                     if (!selectedNugget) return;
                     const doc = selectedNugget.documents.find(d => d.id === docId);
                     if (!doc) return;
+                    // Auto-increment name if it collides in target nugget
+                    const targetNugget = nuggets.find(n => n.id === targetNuggetId);
+                    const targetDocNames = targetNugget ? targetNugget.documents.map(d => d.name) : [];
+                    const uniqueDocName = getUniqueName(doc.name, targetDocNames, true);
                     // Copy the document to the target nugget with a new ID
                     const newDocId = `doc-${Math.random().toString(36).substr(2, 9)}`;
-                    const docCopy: UploadedFile = { ...doc, id: newDocId };
+                    const docCopy: UploadedFile = { ...doc, id: newDocId, name: uniqueDocName };
                     // Add to target nugget
                     updateNugget(targetNuggetId, n => ({
                       ...n,
@@ -866,11 +1095,17 @@ const App: React.FC = () => {
                     if (!selectedNugget) return;
                     const doc = selectedNugget.documents.find(d => d.id === docId);
                     if (!doc) return;
+                    // Auto-increment nugget name within the same project
+                    const sourceProject = projects.find(p => p.nuggetIds.includes(selectedNugget.id));
+                    const projectNuggetNames = sourceProject
+                      ? sourceProject.nuggetIds.map(nid => nuggets.find(n => n.id === nid)?.name || '').filter(Boolean)
+                      : nuggets.map(n => n.name);
+                    const uniqueNuggetName = getUniqueName(nuggetName, projectNuggetNames);
                     const newDocId = `doc-${Math.random().toString(36).substr(2, 9)}`;
                     const docCopy: UploadedFile = { ...doc, id: newDocId };
                     const newNugget: Nugget = {
                       id: `nugget-${Math.random().toString(36).substr(2, 9)}`,
-                      name: nuggetName,
+                      name: uniqueNuggetName,
                       type: 'insights',
                       documents: [docCopy],
                       headings: [],
@@ -879,18 +1114,22 @@ const App: React.FC = () => {
                       lastModifiedAt: Date.now(),
                     };
                     addNugget(newNugget);
-                    // Add to same project as the source nugget
-                    const sourceProject = projects.find(p => p.nuggetIds.includes(selectedNugget.id));
+                    // Add to same project as the source nugget (reuse sourceProject from above)
                     if (sourceProject) {
                       addNuggetToProject(sourceProject.id, newNugget.id);
                     }
                   }}
                   onUploadDocuments={async (files) => {
+                    // Collect existing doc names + names assigned in this batch for dedup
+                    const currentDocNames = [...(selectedNugget?.documents || []).map(d => d.name)];
                     for (const file of Array.from(files)) {
+                      const uniqueName = getUniqueName(file.name, currentDocNames, true);
+                      currentDocNames.push(uniqueName);
                       const placeholder = createPlaceholderDocument(file);
+                      placeholder.name = uniqueName;
                       addNuggetDocument(placeholder);
                       processFileToDocument(file, placeholder.id)
-                        .then(processed => updateNuggetDocument(placeholder.id, processed))
+                        .then(processed => updateNuggetDocument(placeholder.id, { ...processed, name: uniqueName }))
                         .catch(() => updateNuggetDocument(placeholder.id, { ...placeholder, status: 'error' as const }));
                     }
                   }}

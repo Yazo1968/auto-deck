@@ -72,6 +72,7 @@ const AssetLab: React.FC<AssetLabProps> = ({
   const [openMenu, setOpenMenu] = useState<'style' | 'ratio' | 'resolution' | 'reference' | 'download' | 'generate' | 'palette-background' | 'palette-primary' | 'palette-secondary' | 'palette-accent' | 'palette-text' | null>(null);
   const [menuMode, setMenuMode] = useState<'hover' | 'locked'>('hover');
   const [toolbarState, setToolbarState] = useState<AnnotationToolbarState | null>(null);
+  const [cardLabMode, setCardLabMode] = useState<'generate' | 'inpaint'>('generate');
 
   const handleDownloadReference = () => {
     if (!referenceImage) return;
@@ -100,9 +101,12 @@ const AssetLab: React.FC<AssetLabProps> = ({
 
   const hasImage = !!activeHeading?.cardUrlMap?.[activeLogicTab];
 
-  // Clear toolbar state when no image
+  // Clear toolbar state and revert to generate mode when no image
   useEffect(() => {
-    if (!hasImage) setToolbarState(null);
+    if (!hasImage) {
+      setToolbarState(null);
+      setCardLabMode('generate');
+    }
   }, [hasImage]);
   const isGenerating = !!activeHeading?.isGeneratingMap?.[activeLogicTab];
 
@@ -188,10 +192,44 @@ const AssetLab: React.FC<AssetLabProps> = ({
       {/* ─── Design Toolbar ─── */}
       <div className="relative z-30">
         {/* ─── Title row ─── */}
-        <div className="px-5 h-[36px] flex items-center justify-center shrink-0">
+        <div className="px-5 pt-2 pb-1 flex flex-col items-center justify-center shrink-0">
           <span className="text-[17px] tracking-tight text-zinc-900"><span className="font-light italic">card</span><span className="font-semibold not-italic">lab</span></span>
+          <p className="text-[9px] text-zinc-400 mt-0.5 text-center">Generate/Regenerate cards or inpaint existing cards</p>
+        </div>
+        {/* ─── Mode toggle ─── */}
+        <div className="shrink-0 border-b border-zinc-100">
+          <div className="px-5 h-[32px] flex items-center justify-center gap-0">
+            <button
+              onClick={() => setCardLabMode('generate')}
+              title="Generate mode"
+              className={`h-7 px-2.5 text-[11px] flex items-center justify-center cursor-pointer ${
+                cardLabMode === 'generate'
+                  ? 'rounded-[14px] font-bold text-zinc-900 border-2 border-black bg-zinc-100'
+                  : 'rounded-[6px] hover:rounded-[14px] font-medium border border-black text-zinc-500 hover:text-zinc-800 hover:bg-zinc-50'
+              }`}
+              style={{ transition: 'border-radius 200ms ease, background-color 150ms ease, color 150ms ease' }}
+            >
+              Generate
+            </button>
+            <button
+              onClick={() => hasImage && setCardLabMode('inpaint')}
+              disabled={!hasImage}
+              title={hasImage ? 'Inpaint mode' : 'Generate a card first to use inpainting'}
+              className={`h-7 px-2.5 text-[11px] flex items-center justify-center ${
+                !hasImage
+                  ? 'rounded-[6px] font-medium border border-zinc-200 text-zinc-300 cursor-not-allowed'
+                  : cardLabMode === 'inpaint'
+                    ? 'rounded-[14px] font-bold text-zinc-900 border-2 border-black bg-zinc-100 cursor-pointer'
+                    : 'rounded-[6px] hover:rounded-[14px] font-medium border border-black text-zinc-500 hover:text-zinc-800 hover:bg-zinc-50 cursor-pointer'
+              }`}
+              style={{ transition: 'border-radius 200ms ease, background-color 150ms ease, color 150ms ease' }}
+            >
+              Inpaint
+            </button>
+          </div>
         </div>
         {/* ─── Toolbar row ─── */}
+        {cardLabMode === 'generate' ? (
         <div ref={styleToolbarRef} className="px-5 h-[40px] mb-1 flex items-center justify-center gap-2">
           {/* Style controls toolbar */}
           <div className="flex items-center gap-1 px-1.5 h-9">
@@ -200,18 +238,18 @@ const AssetLab: React.FC<AssetLabProps> = ({
               <button
                 onClick={() => toggleMenuLocked('style')}
                 title={`Style: ${menuDraftOptions.style}`}
-                className={`h-7 px-2 rounded-full flex items-center justify-center text-[11px] font-medium uppercase transition-all duration-200 active:scale-95 whitespace-nowrap ${openMenu === 'style' ? 'bg-zinc-900 text-white' : 'text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100'}`}
+                className={`h-7 px-2 rounded-full flex items-center justify-center text-[11px] font-medium uppercase transition-all duration-200 active:scale-95 whitespace-nowrap ${openMenu === 'style' ? 'bg-zinc-900 text-white' : 'text-black hover:bg-zinc-100'}`}
               >
                 {menuDraftOptions.style}
               </button>
               {openMenu === 'style' && (
                 <div className="absolute left-1/2 -translate-x-1/2 top-full pt-2 z-50">
-                <div className="glass-toolbar rounded-2xl py-2 px-1 shadow-lg border border-zinc-100 max-h-[280px] overflow-y-auto animate-in fade-in slide-in-from-top-2 duration-150">
+                <div className="rounded-[6px] py-2 px-1 border border-black bg-white max-h-[280px] overflow-y-auto animate-in fade-in slide-in-from-top-2 duration-150">
                   {Object.keys(VISUAL_STYLES).map(styleName => (
                     <button
                       key={styleName}
                       onClick={() => { handleStyleChange({ target: { value: styleName } } as React.ChangeEvent<HTMLSelectElement>); setOpenMenu(null); }}
-                      className={`block w-full text-left px-3 py-1.5 text-[11px] font-medium uppercase rounded-lg whitespace-nowrap transition-colors ${menuDraftOptions.style === styleName ? 'bg-zinc-900 text-white' : 'text-zinc-600 hover:bg-zinc-100'}`}
+                      className={`block w-full text-left px-3 py-1.5 text-[11px] font-medium uppercase rounded-lg whitespace-nowrap transition-colors ${menuDraftOptions.style === styleName ? 'bg-zinc-900 text-white' : 'text-black hover:bg-zinc-100'}`}
                     >
                       {styleName}
                     </button>
@@ -228,18 +266,18 @@ const AssetLab: React.FC<AssetLabProps> = ({
               <button
                 onClick={() => toggleMenuLocked('ratio')}
                 title={`Ratio: ${menuDraftOptions.aspectRatio}`}
-                className={`h-7 px-2 rounded-full flex items-center justify-center text-[11px] font-medium uppercase transition-all duration-200 active:scale-95 whitespace-nowrap ${openMenu === 'ratio' ? 'bg-zinc-900 text-white' : 'text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100'}`}
+                className={`h-7 px-2 rounded-full flex items-center justify-center text-[11px] font-medium uppercase transition-all duration-200 active:scale-95 whitespace-nowrap ${openMenu === 'ratio' ? 'bg-zinc-900 text-white' : 'text-black hover:bg-zinc-100'}`}
               >
                 {menuDraftOptions.aspectRatio}
               </button>
               {openMenu === 'ratio' && (
                 <div className="absolute left-1/2 -translate-x-1/2 top-full pt-2 z-50">
-                <div className="glass-toolbar rounded-2xl py-2 px-1 shadow-lg border border-zinc-100 animate-in fade-in slide-in-from-top-2 duration-150">
+                <div className="rounded-[6px] py-2 px-1 border border-black bg-white animate-in fade-in slide-in-from-top-2 duration-150">
                   {(['16:9', '4:3', '1:1', '9:16', '3:2', '2:3', '3:4', '4:5', '5:4', '21:9'] as const).map(ratio => (
                     <button
                       key={ratio}
                       onClick={() => { setMenuDraftOptions(prev => ({ ...prev, aspectRatio: ratio })); setOpenMenu(null); }}
-                      className={`block w-full text-left px-3 py-1.5 text-[11px] font-medium uppercase rounded-lg whitespace-nowrap transition-colors ${menuDraftOptions.aspectRatio === ratio ? 'bg-zinc-900 text-white' : 'text-zinc-600 hover:bg-zinc-100'}`}
+                      className={`block w-full text-left px-3 py-1.5 text-[11px] font-medium uppercase rounded-lg whitespace-nowrap transition-colors ${menuDraftOptions.aspectRatio === ratio ? 'bg-zinc-900 text-white' : 'text-black hover:bg-zinc-100'}`}
                     >
                       {ratio}
                     </button>
@@ -256,18 +294,18 @@ const AssetLab: React.FC<AssetLabProps> = ({
               <button
                 onClick={() => toggleMenuLocked('resolution')}
                 title={`Resolution: ${menuDraftOptions.resolution}`}
-                className={`h-7 px-2 rounded-full flex items-center justify-center text-[11px] font-medium uppercase transition-all duration-200 active:scale-95 whitespace-nowrap ${openMenu === 'resolution' ? 'bg-zinc-900 text-white' : 'text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100'}`}
+                className={`h-7 px-2 rounded-full flex items-center justify-center text-[11px] font-medium uppercase transition-all duration-200 active:scale-95 whitespace-nowrap ${openMenu === 'resolution' ? 'bg-zinc-900 text-white' : 'text-black hover:bg-zinc-100'}`}
               >
                 {menuDraftOptions.resolution}
               </button>
               {openMenu === 'resolution' && (
                 <div className="absolute left-1/2 -translate-x-1/2 top-full pt-2 z-50">
-                <div className="glass-toolbar rounded-2xl py-2 px-1 shadow-lg border border-zinc-100 animate-in fade-in slide-in-from-top-2 duration-150">
+                <div className="rounded-[6px] py-2 px-1 border border-black bg-white animate-in fade-in slide-in-from-top-2 duration-150">
                   {(['1K', '2K', '4K'] as const).map(res => (
                     <button
                       key={res}
                       onClick={() => { setMenuDraftOptions(prev => ({ ...prev, resolution: res as StylingOptions['resolution'] })); setOpenMenu(null); }}
-                      className={`block w-full text-left px-3 py-1.5 text-[11px] font-medium uppercase rounded-lg whitespace-nowrap transition-colors ${menuDraftOptions.resolution === res ? 'bg-zinc-900 text-white' : 'text-zinc-600 hover:bg-zinc-100'}`}
+                      className={`block w-full text-left px-3 py-1.5 text-[11px] font-medium uppercase rounded-lg whitespace-nowrap transition-colors ${menuDraftOptions.resolution === res ? 'bg-zinc-900 text-white' : 'text-black hover:bg-zinc-100'}`}
                     >
                       {res}
                     </button>
@@ -292,13 +330,13 @@ const AssetLab: React.FC<AssetLabProps> = ({
               </button>
               {openMenu === 'reference' && (
                 <div className="absolute left-1/2 -translate-x-1/2 top-full pt-2 z-50">
-                <div className="glass-toolbar rounded-2xl py-2 px-1 shadow-lg border border-zinc-100 animate-in fade-in slide-in-from-top-2 duration-150 min-w-[170px]">
+                <div className="rounded-[6px] py-2 px-1 border border-black bg-white animate-in fade-in slide-in-from-top-2 duration-150 min-w-[170px]">
                   {referenceImage && (
                     <>
                       {/* Use Reference toggle */}
                       <button
                         onClick={() => { onToggleUseReference?.(); }}
-                        className="flex items-center justify-between w-full px-3 py-1.5 rounded-lg transition-colors text-zinc-600 hover:bg-zinc-100"
+                        className="flex items-center justify-between w-full px-3 py-1.5 rounded-lg transition-colors text-black hover:bg-zinc-100"
                       >
                         <span className="text-[11px] font-medium uppercase">Use Ref.</span>
                         <div className={`relative w-6 h-3.5 rounded-full transition-colors duration-200 ${useReferenceImage ? 'bg-zinc-900' : 'bg-zinc-300'}`}>
@@ -308,7 +346,7 @@ const AssetLab: React.FC<AssetLabProps> = ({
                       {/* View Reference toggle */}
                       <button
                         onClick={() => { setShowReference(prev => !prev); }}
-                        className="flex items-center justify-between w-full px-3 py-1.5 rounded-lg transition-colors text-zinc-600 hover:bg-zinc-100"
+                        className="flex items-center justify-between w-full px-3 py-1.5 rounded-lg transition-colors text-black hover:bg-zinc-100"
                       >
                         <span className="text-[11px] font-medium uppercase">View Ref.</span>
                         <div className={`relative w-6 h-3.5 rounded-full transition-colors duration-200 ${showReference ? 'bg-zinc-900' : 'bg-zinc-300'}`}>
@@ -321,7 +359,7 @@ const AssetLab: React.FC<AssetLabProps> = ({
                   <button
                     onClick={() => { onStampReference?.(); setOpenMenu(null); }}
                     disabled={!hasImage}
-                    className={`block w-full text-left px-3 py-1.5 text-[11px] font-medium uppercase rounded-lg whitespace-nowrap transition-colors ${referenceImage && hasImage && activeHeading?.cardUrlMap?.[activeLogicTab] === referenceImage.url ? 'bg-zinc-900 text-white' : 'text-zinc-600 hover:bg-zinc-100'} disabled:opacity-30 disabled:cursor-not-allowed`}
+                    className={`block w-full text-left px-3 py-1.5 text-[11px] font-medium uppercase rounded-lg whitespace-nowrap transition-colors ${referenceImage && hasImage && activeHeading?.cardUrlMap?.[activeLogicTab] === referenceImage.url ? 'bg-zinc-900 text-white' : 'text-black hover:bg-zinc-100'} disabled:opacity-30 disabled:cursor-not-allowed`}
                   >
                     Set Current as Ref.
                   </button>
@@ -329,7 +367,7 @@ const AssetLab: React.FC<AssetLabProps> = ({
                     <>
                       <button
                         onClick={() => { handleDownloadReference(); setOpenMenu(null); }}
-                        className="block w-full text-left px-3 py-1.5 text-[11px] font-medium uppercase rounded-lg whitespace-nowrap text-zinc-600 hover:bg-zinc-100 transition-colors"
+                        className="block w-full text-left px-3 py-1.5 text-[11px] font-medium uppercase rounded-lg whitespace-nowrap text-black hover:bg-zinc-100 transition-colors"
                       >
                         Download Ref.
                       </button>
@@ -361,7 +399,7 @@ const AssetLab: React.FC<AssetLabProps> = ({
                   />
                   {openMenu === menuKey && (
                     <div className="absolute left-1/2 -translate-x-1/2 top-full pt-2 z-50">
-                    <div className="glass-toolbar rounded-2xl py-2 px-2 shadow-lg border border-zinc-100 animate-in fade-in slide-in-from-top-2 duration-150 flex items-center gap-2">
+                    <div className="rounded-[6px] py-2 px-2 border border-black bg-white animate-in fade-in slide-in-from-top-2 duration-150 flex items-center gap-2">
                       <input
                         type="color"
                         value={menuDraftOptions.palette[key]}
@@ -397,18 +435,18 @@ const AssetLab: React.FC<AssetLabProps> = ({
               </button>
               {openMenu === 'generate' && (
                 <div className="absolute left-1/2 -translate-x-1/2 top-full pt-2 z-50">
-                <div className="glass-toolbar rounded-2xl py-2 px-1 shadow-lg border border-zinc-100 animate-in fade-in slide-in-from-top-2 duration-150 min-w-[160px]">
+                <div className="rounded-[6px] py-2 px-1 border border-black bg-white animate-in fade-in slide-in-from-top-2 duration-150 min-w-[160px]">
                   <button
                     onClick={() => { activeHeading && onGenerateCard(activeHeading); setOpenMenu(null); }}
                     disabled={!activeHeading}
-                    className="flex items-center gap-2 w-full text-left px-3 py-1.5 text-[11px] font-medium uppercase rounded-lg whitespace-nowrap text-zinc-600 hover:bg-zinc-100 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                    className="flex items-center gap-2 w-full text-left px-3 py-1.5 text-[11px] font-medium uppercase rounded-lg whitespace-nowrap text-black hover:bg-zinc-100 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
                   >
                     Generate Card
                   </button>
                   <button
                     onClick={() => { onGenerateAll(); setOpenMenu(null); }}
                     disabled={selectedCount === 0}
-                    className="flex items-center gap-2 w-full text-left px-3 py-1.5 text-[11px] font-medium uppercase rounded-lg whitespace-nowrap text-zinc-600 hover:bg-zinc-100 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                    className="flex items-center gap-2 w-full text-left px-3 py-1.5 text-[11px] font-medium uppercase rounded-lg whitespace-nowrap text-black hover:bg-zinc-100 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
                   >
                     Generate Selected
                   </button>
@@ -448,16 +486,16 @@ const AssetLab: React.FC<AssetLabProps> = ({
               </button>
               {openMenu === 'download' && (
                 <div className="absolute left-1/2 -translate-x-1/2 top-full pt-2 z-50">
-                <div className="glass-toolbar rounded-2xl py-2 px-1 shadow-lg border border-zinc-100 animate-in fade-in slide-in-from-top-2 duration-150 min-w-[140px]">
+                <div className="rounded-[6px] py-2 px-1 border border-black bg-white animate-in fade-in slide-in-from-top-2 duration-150 min-w-[140px]">
                   <button
                     onClick={() => { onDownloadImage?.(); setOpenMenu(null); }}
-                    className="flex items-center gap-2 w-full text-left px-3 py-1.5 text-[11px] font-medium uppercase rounded-lg whitespace-nowrap text-zinc-600 hover:bg-zinc-100 transition-colors"
+                    className="flex items-center gap-2 w-full text-left px-3 py-1.5 text-[11px] font-medium uppercase rounded-lg whitespace-nowrap text-black hover:bg-zinc-100 transition-colors"
                   >
                     Download Card
                   </button>
                   <button
                     onClick={() => { onDownloadAllImages?.(); setOpenMenu(null); }}
-                    className="flex items-center gap-2 w-full text-left px-3 py-1.5 text-[11px] font-medium uppercase rounded-lg whitespace-nowrap text-zinc-600 hover:bg-zinc-100 transition-colors"
+                    className="flex items-center gap-2 w-full text-left px-3 py-1.5 text-[11px] font-medium uppercase rounded-lg whitespace-nowrap text-black hover:bg-zinc-100 transition-colors"
                   >
                     Download All
                   </button>
@@ -467,6 +505,36 @@ const AssetLab: React.FC<AssetLabProps> = ({
             </div>
           </div>
         </div>
+        ) : (
+        <div className="px-5 h-[40px] mb-1 flex items-center justify-center shrink-0">
+          <div className="flex justify-center">
+            {hasImage && toolbarState && (
+              <AnnotationToolbar
+                activeTool={toolbarState.activeTool}
+                onToolChange={toolbarState.onToolChange}
+                annotationCount={toolbarState.annotationCount}
+                onDiscardMarks={toolbarState.onDiscardMarks}
+                onModify={toolbarState.onModify}
+                isModifying={toolbarState.isModifying}
+                activeColor={toolbarState.activeColor}
+                onColorChange={toolbarState.onColorChange}
+                palette={toolbarState.palette}
+                contentDirty={toolbarState.contentDirty}
+                hasSelection={toolbarState.hasSelection}
+                onDeleteSelected={toolbarState.onDeleteSelected}
+                inline
+                zoomScale={toolbarState.zoomScale}
+                onZoomIn={toolbarState.onZoomIn}
+                onZoomOut={toolbarState.onZoomOut}
+                onZoomReset={toolbarState.onZoomReset}
+                onRequestFullscreen={toolbarState.onRequestFullscreen}
+                globalInstruction={toolbarState.globalInstruction}
+                onGlobalInstructionChange={toolbarState.onGlobalInstructionChange}
+              />
+            )}
+          </div>
+        </div>
+        )}
 
       </div>
 
@@ -563,81 +631,50 @@ const AssetLab: React.FC<AssetLabProps> = ({
           </div>
         )}
 
-        {/* Image info — below image, left-aligned */}
-        {(showReference && referenceImage) || (hasImage && activeHeading?.settings) ? (
-          <div className="absolute bottom-2 left-3 z-20">
-            {showReference && referenceImage ? (
-              <div className="flex items-center gap-1">
-                <span className="text-[9px] font-medium uppercase text-zinc-300 tracking-[0.1em]">Image Properties</span>
-                <span className="text-[9px] text-zinc-300">·</span>
-                <span className="text-[9px] font-medium uppercase" style={{ color: '#ccff00' }}>ref</span>
-                <span className="text-[9px] text-zinc-300">·</span>
-                <span className="text-[9px] font-medium uppercase text-zinc-400">{referenceImage.settings.style}</span>
-                <span className="text-[9px] text-zinc-300">·</span>
-                <span className="text-[9px] font-medium uppercase text-zinc-400">{referenceImage.settings.aspectRatio}</span>
-                <span className="text-[9px] text-zinc-300">·</span>
-                <span className="text-[9px] font-medium uppercase text-zinc-400">{referenceImage.settings.resolution}</span>
-                <div className="flex -space-x-0.5 ml-0.5">
-                  {Object.values(referenceImage.settings.palette).map((color, i) => (
-                    <div key={i} className="w-2 h-2 rounded-full ring-1 ring-white" style={{ backgroundColor: color, zIndex: 5 - i }} />
-                  ))}
-                </div>
-              </div>
-            ) : hasImage && activeHeading?.settings && (
-              <div className="flex items-center gap-1">
-                <span className="text-[9px] font-medium uppercase text-zinc-300 tracking-[0.1em]">Image Properties</span>
-                <span className="text-[9px] text-zinc-300">·</span>
-                <span className="text-[9px] font-medium uppercase text-zinc-400">{activeHeading.settings.style}</span>
-                <span className="text-[9px] text-zinc-300">·</span>
-                <span className="text-[9px] font-medium uppercase text-zinc-400">{activeHeading.settings.aspectRatio}</span>
-                <span className="text-[9px] text-zinc-300">·</span>
-                <span className="text-[9px] font-medium uppercase text-zinc-400">{activeHeading.settings.resolution}</span>
-                <div className="flex -space-x-0.5 ml-0.5">
-                  {Object.values(activeHeading.settings.palette).map((color, i) => (
-                    <div
-                      key={i}
-                      className="w-2 h-2 rounded-full ring-1 ring-white"
-                      style={{ backgroundColor: color, zIndex: 5 - i }}
-                    />
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        ) : null}
       </div>
 
-      {/* ─── Footer: annotation toolbar (with zoom) ─── */}
-      <div className="px-3 pt-2 h-[48px] flex items-center justify-center shrink-0 relative z-30">
-        {/* Annotation toolbar (includes zoom controls) */}
-        <div className="flex justify-center">
-          {hasImage && toolbarState && (
-            <AnnotationToolbar
-              activeTool={toolbarState.activeTool}
-              onToolChange={toolbarState.onToolChange}
-              annotationCount={toolbarState.annotationCount}
-              onDiscardMarks={toolbarState.onDiscardMarks}
-              onModify={toolbarState.onModify}
-              isModifying={toolbarState.isModifying}
-              activeColor={toolbarState.activeColor}
-              onColorChange={toolbarState.onColorChange}
-              palette={toolbarState.palette}
-              contentDirty={toolbarState.contentDirty}
-              hasSelection={toolbarState.hasSelection}
-              onDeleteSelected={toolbarState.onDeleteSelected}
-              inline
-              zoomScale={toolbarState.zoomScale}
-              onZoomIn={toolbarState.onZoomIn}
-              onZoomOut={toolbarState.onZoomOut}
-              onZoomReset={toolbarState.onZoomReset}
-              onRequestFullscreen={toolbarState.onRequestFullscreen}
-              globalInstruction={toolbarState.globalInstruction}
-              onGlobalInstructionChange={toolbarState.onGlobalInstructionChange}
-            />
+      {/* ─── Card Properties footer ─── */}
+      {(showReference && referenceImage) || (hasImage && activeHeading?.settings) ? (
+        <div className="shrink-0 px-3 py-1.5 flex items-center justify-center">
+          {showReference && referenceImage ? (
+            <div className="flex items-center gap-1">
+              <span className="text-[9px] font-medium uppercase text-zinc-300 tracking-[0.1em]">Card Properties</span>
+              <span className="text-[9px] text-zinc-300">·</span>
+              <span className="text-[9px] font-medium uppercase" style={{ color: '#ccff00' }}>ref</span>
+              <span className="text-[9px] text-zinc-300">·</span>
+              <span className="text-[9px] font-medium uppercase text-zinc-400">{referenceImage.settings.style}</span>
+              <span className="text-[9px] text-zinc-300">·</span>
+              <span className="text-[9px] font-medium uppercase text-zinc-400">{referenceImage.settings.aspectRatio}</span>
+              <span className="text-[9px] text-zinc-300">·</span>
+              <span className="text-[9px] font-medium uppercase text-zinc-400">{referenceImage.settings.resolution}</span>
+              <div className="flex -space-x-0.5 ml-0.5">
+                {Object.values(referenceImage.settings.palette).map((color, i) => (
+                  <div key={i} className="w-2 h-2 rounded-full ring-1 ring-white/50" style={{ backgroundColor: color, zIndex: 5 - i }} />
+                ))}
+              </div>
+            </div>
+          ) : hasImage && activeHeading?.settings && (
+            <div className="flex items-center gap-1">
+              <span className="text-[9px] font-medium uppercase text-zinc-300 tracking-[0.1em]">Card Properties</span>
+              <span className="text-[9px] text-zinc-300">·</span>
+              <span className="text-[9px] font-medium uppercase text-zinc-400">{activeHeading.settings.style}</span>
+              <span className="text-[9px] text-zinc-300">·</span>
+              <span className="text-[9px] font-medium uppercase text-zinc-400">{activeHeading.settings.aspectRatio}</span>
+              <span className="text-[9px] text-zinc-300">·</span>
+              <span className="text-[9px] font-medium uppercase text-zinc-400">{activeHeading.settings.resolution}</span>
+              <div className="flex -space-x-0.5 ml-0.5">
+                {Object.values(activeHeading.settings.palette).map((color, i) => (
+                  <div
+                    key={i}
+                    className="w-2 h-2 rounded-full ring-1 ring-white/50"
+                    style={{ backgroundColor: color, zIndex: 5 - i }}
+                  />
+                ))}
+              </div>
+            </div>
           )}
         </div>
-
-      </div>
+      ) : null}
 
       {/* Mismatch dialog — positioned within cardlab */}
       {mismatchDialog && (

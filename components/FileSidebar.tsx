@@ -1,6 +1,7 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Nugget, Project } from '../types';
+import { isNameTaken } from '../utils/naming';
 
 interface FileSidebarProps {
   isOpen: boolean;
@@ -81,6 +82,7 @@ const FileSidebar: React.FC<FileSidebarProps> = ({
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renamingType, setRenamingType] = useState<'nugget' | 'project'>('nugget');
   const [renameValue, setRenameValue] = useState('');
+  const [renameError, setRenameError] = useState('');
   // Nugget copy/move hover submenu state
   const [showCopyMoveSubmenu, setShowCopyMoveSubmenu] = useState(false);
   const [noProjectsNuggetId, setNoProjectsNuggetId] = useState<string | null>(null);
@@ -117,21 +119,37 @@ const FileSidebar: React.FC<FileSidebarProps> = ({
     if (!renamingId || !renameValue.trim()) {
       setRenamingId(null);
       setRenameValue('');
+      setRenameError('');
       return;
     }
+    const trimmed = renameValue.trim();
     if (renamingType === 'nugget') {
       const nugget = nuggets.find(n => n.id === renamingId);
-      if (nugget && renameValue.trim() !== nugget.name) {
-        onRenameNugget(renamingId, renameValue.trim());
+      if (nugget && trimmed !== nugget.name) {
+        // Check uniqueness within the same project
+        const parentProject = projects.find(p => p.nuggetIds.includes(renamingId));
+        const siblingNames = parentProject
+          ? parentProject.nuggetIds.map(nid => nuggets.find(n => n.id === nid)?.name || '').filter(Boolean)
+          : nuggets.map(n => n.name);
+        if (isNameTaken(trimmed, siblingNames, nugget.name)) {
+          setRenameError('A nugget with this name already exists');
+          return;
+        }
+        onRenameNugget(renamingId, trimmed);
       }
     } else {
       const project = projects.find(p => p.id === renamingId);
-      if (project && renameValue.trim() !== project.name) {
-        onRenameProject(renamingId, renameValue.trim());
+      if (project && trimmed !== project.name) {
+        if (isNameTaken(trimmed, projects.map(p => p.name), project.name)) {
+          setRenameError('A project with this name already exists');
+          return;
+        }
+        onRenameProject(renamingId, trimmed);
       }
     }
     setRenamingId(null);
     setRenameValue('');
+    setRenameError('');
   };
 
   // Build a nugget lookup for quick access
@@ -142,7 +160,7 @@ const FileSidebar: React.FC<FileSidebarProps> = ({
       className={`shrink-0 border-r border-zinc-100 bg-[#fafafa] flex flex-col h-full overflow-hidden transition-all duration-300 ease-out ${isOpen ? 'w-[280px]' : 'w-[48px]'}`}
     >
       {/* Header strip — always visible */}
-      <div className={`h-[50px] flex items-center shrink-0 ${isOpen ? 'px-3 justify-between' : 'justify-center'}`}>
+      <div className={`h-9 flex items-center shrink-0 ${isOpen ? 'px-3 justify-between' : 'justify-center'}`}>
         {isOpen ? (
           <>
             <span className="text-sm tracking-tight text-zinc-500 whitespace-nowrap">
@@ -195,22 +213,25 @@ const FileSidebar: React.FC<FileSidebarProps> = ({
       {isOpen && (
         <>
           <div className="flex-1 overflow-y-auto">
-            <div className="px-3 pt-3 pb-3">
-              {/* New Project button */}
+            <div className="shrink-0 flex flex-col items-center justify-center px-5 pt-2 pb-1">
+              <span className="text-[17px] tracking-tight text-zinc-900"><span className="font-light italic">projects</span><span className="font-semibold not-italic">list</span></span>
+              <p className="text-[9px] text-zinc-400 mt-0.5 text-center">create, edit and delete <span className="font-semibold text-zinc-500">PROJECTS</span></p>
+            </div>
+            <div className="px-5 pb-1.5 flex items-center justify-center">
               <button
                 onClick={onCreateProject}
-                className="flex items-center gap-1.5 w-full px-2 py-1.5 rounded-lg text-[11px] font-medium text-zinc-400 hover:text-zinc-900 hover:bg-zinc-100 transition-colors mb-1"
+                className="h-7 px-2.5 text-[11px] flex items-center justify-center cursor-pointer rounded-[6px] hover:rounded-[14px] font-medium border border-black text-zinc-500 hover:text-zinc-800 hover:bg-zinc-50"
+                style={{ transition: 'border-radius 200ms ease, background-color 150ms ease, color 150ms ease' }}
               >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
-                </svg>
                 New Project
               </button>
+            </div>
+            <div className="px-3 pt-2 pb-3">
 
               {projects.length === 0 ? (
                 <p className="text-zinc-300 text-[11px] font-light px-2 py-2">No projects yet</p>
               ) : (
-                <div className="space-y-0.5">
+                <div className="space-y-0">
                   {projects.map(project => (
                     <ProjectRow
                       key={project.id}
@@ -219,10 +240,11 @@ const FileSidebar: React.FC<FileSidebarProps> = ({
                       selectedNuggetId={selectedNuggetId}
                       isRenaming={renamingId === project.id && renamingType === 'project'}
                       renameValue={renameValue}
+                      renameError={renamingId === project.id && renamingType === 'project' ? renameError : ''}
                       renameInputRef={renamingId === project.id && renamingType === 'project' ? renameInputRef : undefined}
-                      onRenameChange={setRenameValue}
+                      onRenameChange={(v) => { setRenameValue(v); setRenameError(''); }}
                       onRenameCommit={commitRename}
-                      onRenameCancel={() => { setRenamingId(null); setRenameValue(''); }}
+                      onRenameCancel={() => { setRenamingId(null); setRenameValue(''); setRenameError(''); }}
                       onToggleCollapse={() => onToggleProjectCollapse(project.id)}
                       onMenuToggle={(pos: { x: number; y: number }) => {
                         if (menuOpenId === project.id && menuMode === 'locked') { setMenuOpenId(null); }
@@ -245,10 +267,11 @@ const FileSidebar: React.FC<FileSidebarProps> = ({
                       // Nugget-level actions
                       nuggetRenamingId={renamingType === 'nugget' ? renamingId : null}
                       nuggetRenameValue={renameValue}
+                      nuggetRenameError={renamingType === 'nugget' ? renameError : ''}
                       nuggetRenameInputRef={renamingType === 'nugget' ? renameInputRef : undefined}
-                      onNuggetRenameChange={setRenameValue}
+                      onNuggetRenameChange={(v) => { setRenameValue(v); setRenameError(''); }}
                       onNuggetRenameCommit={commitRename}
-                      onNuggetRenameCancel={() => { setRenamingId(null); setRenameValue(''); }}
+                      onNuggetRenameCancel={() => { setRenamingId(null); setRenameValue(''); setRenameError(''); }}
                       onNuggetMenuToggle={(nuggetId: string, pos: { x: number; y: number }) => {
                         if (menuOpenId === nuggetId && menuMode === 'locked') { setMenuOpenId(null); }
                         else { setMenuPos(pos); setMenuType('nugget'); setMenuMode('locked'); setMenuOpenId(nuggetId); }
@@ -296,8 +319,8 @@ const FileSidebar: React.FC<FileSidebarProps> = ({
         return createPortal(
           <div
             ref={menuRef}
-            className="fixed z-[130] w-36 bg-white rounded-lg border border-zinc-200 py-1"
-            style={{ top: menuPos.y, left: menuPos.x, transform: 'translateX(-100%)', boxShadow: '0 8px 30px rgba(0,0,0,0.12), 0 2px 8px rgba(0,0,0,0.08)' }}
+            className="fixed z-[130] w-36 bg-white rounded-[6px] border border-black py-1"
+            style={{ top: menuPos.y, left: menuPos.x, transform: 'translateX(-100%)' }}
             onMouseLeave={() => {
               if (menuMode === 'locked') return;
               setMenuOpenId(null);
@@ -312,7 +335,7 @@ const FileSidebar: React.FC<FileSidebarProps> = ({
                 if (isProjectMenu && project) { setRenamingId(id); setRenamingType('project'); setRenameValue(project.name); }
                 else if (nugget) { setRenamingId(id); setRenamingType('nugget'); setRenameValue(nugget.name); }
               }}
-              className="w-full flex items-center gap-2.5 px-3 py-1.5 text-xs text-zinc-700 hover:bg-zinc-50 transition-colors"
+              className="w-full flex items-center gap-2.5 px-3 py-1.5 text-xs text-black hover:bg-zinc-50 transition-colors"
             >
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-zinc-400">
                 <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/>
@@ -324,7 +347,7 @@ const FileSidebar: React.FC<FileSidebarProps> = ({
             {isProjectMenu && (
               <button
                 onClick={(e) => { e.stopPropagation(); setMenuOpenId(null); if (project) onCreateNuggetInProject(project.id); }}
-                className="w-full flex items-center gap-2.5 px-3 py-1.5 text-xs text-zinc-700 hover:bg-zinc-50 transition-colors"
+                className="w-full flex items-center gap-2.5 px-3 py-1.5 text-xs text-black hover:bg-zinc-50 transition-colors"
               >
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-zinc-400">
                   <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
@@ -347,7 +370,7 @@ const FileSidebar: React.FC<FileSidebarProps> = ({
                       setMenuOpenId(null);
                     }
                   }}
-                  className="w-full flex items-center justify-between px-3 py-1.5 text-xs text-zinc-700 hover:bg-zinc-50 transition-colors"
+                  className="w-full flex items-center justify-between px-3 py-1.5 text-xs text-black hover:bg-zinc-50 transition-colors"
                 >
                   <span className="flex items-center gap-2.5">
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-zinc-400">
@@ -365,8 +388,7 @@ const FileSidebar: React.FC<FileSidebarProps> = ({
                 {/* Project list submenu */}
                 {showCopyMoveSubmenu && otherProjects.length > 0 && (
                   <div
-                    className="absolute left-full top-0 mt-4 ml-1 w-[220px] bg-white rounded-xl border border-zinc-200 py-1 z-[140]"
-                    style={{ boxShadow: '0 8px 30px rgba(0,0,0,0.12), 0 2px 8px rgba(0,0,0,0.08)' }}
+                    className="absolute left-full top-0 mt-4 ml-1 w-[220px] bg-white rounded-[6px] border border-black py-1 z-[140]"
                   >
                     <div className="px-3 pb-1 border-b border-zinc-100 mb-1">
                       <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400">Move/Copy to</span>
@@ -377,15 +399,15 @@ const FileSidebar: React.FC<FileSidebarProps> = ({
                           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-zinc-400 shrink-0">
                             <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
                           </svg>
-                          <span className="flex-1 text-[11px] text-zinc-700 truncate" title={p.name}>{p.name}</span>
+                          <span className="flex-1 text-[11px] text-black truncate" title={p.name}>{p.name}</span>
                           <div className="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
                             <button
                               onClick={() => { const nid = menuOpenId!; setMenuOpenId(null); onCopyNuggetToProject(nid, p.id); }}
-                              className="px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-zinc-500 bg-zinc-100 hover:bg-zinc-200 rounded transition-colors"
+                              className="px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-black bg-zinc-100 hover:bg-zinc-200 rounded transition-colors"
                             >Copy</button>
                             <button
                               onClick={() => { if (!sourceProject) return; const nid = menuOpenId!; setMenuOpenId(null); onMoveNuggetToProject(nid, sourceProject.id, p.id); }}
-                              className="px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-zinc-500 bg-zinc-100 hover:bg-zinc-200 rounded transition-colors"
+                              className="px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-black bg-zinc-100 hover:bg-zinc-200 rounded transition-colors"
                             >Move</button>
                           </div>
                         </div>
@@ -433,13 +455,24 @@ const FileSidebar: React.FC<FileSidebarProps> = ({
                 <h3 className="text-sm font-semibold text-zinc-900 tracking-tight mb-1">No Other Projects</h3>
                 <p className="text-[13px] text-zinc-400 mt-1">Create a new project to move or copy this nugget to.</p>
                 <input type="text" value={newProjectName} onChange={(e) => setNewProjectName(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter' && newProjectName.trim() && sourceProject) { const nid = noProjectsNuggetId; setNoProjectsNuggetId(null); setNewProjectName(''); onCreateProjectForNugget(nid, newProjectName.trim(), 'move', sourceProject.id); } }}
-                  placeholder="Project name" autoFocus className="mt-3 w-full px-3 py-2 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-zinc-300 focus:border-zinc-400 transition-all placeholder:text-zinc-300" />
+                  onKeyDown={(e) => { if (e.key === 'Enter' && newProjectName.trim() && sourceProject && !isNameTaken(newProjectName.trim(), projects.map(p => p.name))) { const nid = noProjectsNuggetId; setNoProjectsNuggetId(null); setNewProjectName(''); onCreateProjectForNugget(nid, newProjectName.trim(), 'move', sourceProject.id); } }}
+                  placeholder="Project name" autoFocus className={`mt-3 w-full px-3 py-2 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-zinc-300 transition-all placeholder:text-zinc-300 ${isNameTaken(newProjectName.trim(), projects.map(p => p.name)) ? 'border-red-300 focus:border-red-400' : 'border-zinc-200 focus:border-zinc-400'}`} />
+                {isNameTaken(newProjectName.trim(), projects.map(p => p.name)) && (
+                  <p className="text-[10px] text-red-500 mt-1">A project with this name already exists</p>
+                )}
               </div>
               <div className="px-6 pb-5 pt-1 flex items-center justify-center gap-2">
-                <button onClick={() => { setNoProjectsNuggetId(null); setNewProjectName(''); }} className="px-4 py-2 text-sm font-medium text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100 rounded-lg transition-colors">Cancel</button>
-                <button onClick={() => { if (!newProjectName.trim() || !sourceProject) return; const nid = noProjectsNuggetId; setNoProjectsNuggetId(null); setNewProjectName(''); onCreateProjectForNugget(nid, newProjectName.trim(), 'copy', sourceProject.id); }} disabled={!newProjectName.trim()} className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${newProjectName.trim() ? 'bg-zinc-100 text-zinc-700 hover:bg-zinc-200' : 'bg-zinc-50 text-zinc-300 cursor-not-allowed'}`}>Copy</button>
-                <button onClick={() => { if (!newProjectName.trim() || !sourceProject) return; const nid = noProjectsNuggetId; setNoProjectsNuggetId(null); setNewProjectName(''); onCreateProjectForNugget(nid, newProjectName.trim(), 'move', sourceProject.id); }} disabled={!newProjectName.trim()} className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${newProjectName.trim() ? 'bg-zinc-900 text-white hover:bg-zinc-800' : 'bg-zinc-200 text-zinc-400 cursor-not-allowed'}`}>Move</button>
+                {(() => {
+                  const nameConflict = isNameTaken(newProjectName.trim(), projects.map(p => p.name));
+                  const canSubmit = !!newProjectName.trim() && !nameConflict;
+                  return (
+                    <>
+                      <button onClick={() => { setNoProjectsNuggetId(null); setNewProjectName(''); }} className="px-4 py-2 text-sm font-medium text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100 rounded-lg transition-colors">Cancel</button>
+                      <button onClick={() => { if (!canSubmit || !sourceProject) return; const nid = noProjectsNuggetId; setNoProjectsNuggetId(null); setNewProjectName(''); onCreateProjectForNugget(nid, newProjectName.trim(), 'copy', sourceProject.id); }} disabled={!canSubmit} className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${canSubmit ? 'bg-zinc-100 text-zinc-700 hover:bg-zinc-200' : 'bg-zinc-50 text-zinc-300 cursor-not-allowed'}`}>Copy</button>
+                      <button onClick={() => { if (!canSubmit || !sourceProject) return; const nid = noProjectsNuggetId; setNoProjectsNuggetId(null); setNewProjectName(''); onCreateProjectForNugget(nid, newProjectName.trim(), 'move', sourceProject.id); }} disabled={!canSubmit} className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${canSubmit ? 'bg-zinc-900 text-white hover:bg-zinc-800' : 'bg-zinc-200 text-zinc-400 cursor-not-allowed'}`}>Move</button>
+                    </>
+                  );
+                })()}
               </div>
             </div>
           </div>,
@@ -519,6 +552,7 @@ interface ProjectRowProps {
   selectedNuggetId: string | null;
   isRenaming: boolean;
   renameValue: string;
+  renameError: string;
   renameInputRef?: React.RefObject<HTMLInputElement | null>;
   onRenameChange: (value: string) => void;
   onRenameCommit: () => void;
@@ -534,6 +568,7 @@ interface ProjectRowProps {
   // Nugget-level props (passed through)
   nuggetRenamingId: string | null;
   nuggetRenameValue: string;
+  nuggetRenameError: string;
   nuggetRenameInputRef?: React.RefObject<HTMLInputElement | null>;
   onNuggetRenameChange: (value: string) => void;
   onNuggetRenameCommit: () => void;
@@ -547,10 +582,10 @@ interface ProjectRowProps {
 
 const ProjectRow: React.FC<ProjectRowProps> = ({
   project, nuggets, selectedNuggetId,
-  isRenaming, renameValue, renameInputRef, onRenameChange, onRenameCommit, onRenameCancel,
+  isRenaming, renameValue, renameError, renameInputRef, onRenameChange, onRenameCommit, onRenameCancel,
   onToggleCollapse, onMenuToggle, onMenuHoverEnter, onMenuHoverLeave, onRename, onNewNugget, onDelete,
   onSelectNugget,
-  nuggetRenamingId, nuggetRenameValue, nuggetRenameInputRef,
+  nuggetRenamingId, nuggetRenameValue, nuggetRenameError, nuggetRenameInputRef,
   onNuggetRenameChange, onNuggetRenameCommit, onNuggetRenameCancel,
   onNuggetMenuToggle, onNuggetMenuHoverEnter, onNuggetMenuHoverLeave, onNuggetRename, onNuggetDelete,
 }) => {
@@ -559,7 +594,8 @@ const ProjectRow: React.FC<ProjectRowProps> = ({
   <div>
     {/* Project header row */}
     <div
-      className="group flex items-center gap-1 px-2 py-1.5 rounded-lg hover:bg-zinc-100 transition-colors duration-150 cursor-pointer"
+      className="group flex items-center gap-1 px-2 h-[46px] rounded-[6px] hover:rounded-[22px] border border-black hover:bg-zinc-50 cursor-pointer"
+      style={{ transition: 'border-radius 200ms ease, background-color 150ms ease, color 150ms ease' }}
       onMouseEnter={() => {
         if (kebabRef.current) {
           const rect = kebabRef.current.getBoundingClientRect();
@@ -584,18 +620,21 @@ const ProjectRow: React.FC<ProjectRowProps> = ({
       {/* Project name */}
       <div className="flex-1 min-w-0" onClick={isRenaming ? undefined : onToggleCollapse}>
         {isRenaming ? (
-          <input
-            ref={renameInputRef}
-            value={renameValue}
-            onChange={(e) => onRenameChange(e.target.value)}
-            onBlur={onRenameCommit}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') onRenameCommit();
-              if (e.key === 'Escape') onRenameCancel();
-            }}
-            onClick={(e) => e.stopPropagation()}
-            className="w-full bg-transparent outline-none text-xs font-medium text-zinc-900 border-b border-zinc-400 py-0"
-          />
+          <div>
+            <input
+              ref={renameInputRef}
+              value={renameValue}
+              onChange={(e) => onRenameChange(e.target.value)}
+              onBlur={onRenameCommit}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') onRenameCommit();
+                if (e.key === 'Escape') onRenameCancel();
+              }}
+              onClick={(e) => e.stopPropagation()}
+              className={`w-full bg-transparent outline-none text-xs font-medium text-zinc-900 border-b py-0 ${renameError ? 'border-red-400' : 'border-zinc-400'}`}
+            />
+            {renameError && <p className="text-[9px] text-red-500 mt-0.5">{renameError}</p>}
+          </div>
         ) : (
           <p className="text-xs font-medium text-zinc-700 truncate" title={project.name}>{project.name}</p>
         )}
@@ -624,7 +663,7 @@ const ProjectRow: React.FC<ProjectRowProps> = ({
         {nuggets.length === 0 ? (
           <p className="text-zinc-300 text-[10px] font-light px-2 py-1.5 italic">No nuggets</p>
         ) : (
-          <div className="space-y-0.5">
+          <div className="space-y-0">
             {nuggets.map(nugget => (
               <NuggetRow
                 key={nugget.id}
@@ -632,6 +671,7 @@ const ProjectRow: React.FC<ProjectRowProps> = ({
                 isSelected={selectedNuggetId === nugget.id}
                 isRenaming={nuggetRenamingId === nugget.id}
                 renameValue={nuggetRenameValue}
+                renameError={nuggetRenamingId === nugget.id ? nuggetRenameError : ''}
                 renameInputRef={nuggetRenamingId === nugget.id ? nuggetRenameInputRef : undefined}
                 onRenameChange={onNuggetRenameChange}
                 onRenameCommit={onNuggetRenameCommit}
@@ -657,6 +697,7 @@ interface NuggetRowProps {
   isSelected: boolean;
   isRenaming: boolean;
   renameValue: string;
+  renameError: string;
   renameInputRef?: React.RefObject<HTMLInputElement | null>;
   onRenameChange: (value: string) => void;
   onRenameCommit: () => void;
@@ -669,16 +710,17 @@ interface NuggetRowProps {
 
 const NuggetRow: React.FC<NuggetRowProps> = ({
   nugget, isSelected,
-  isRenaming, renameValue, renameInputRef, onRenameChange, onRenameCommit, onRenameCancel,
+  isRenaming, renameValue, renameError, renameInputRef, onRenameChange, onRenameCommit, onRenameCancel,
   onSelect, onMenuToggle, onMenuHoverEnter, onMenuHoverLeave,
 }) => {
   const kebabRef = useRef<HTMLButtonElement>(null);
   return (
   <div
     onClick={isRenaming ? undefined : onSelect}
-    className={`group flex items-center gap-2 px-2 py-1.5 rounded-lg transition-colors duration-150 cursor-pointer ${
-      isSelected ? 'bg-zinc-100 text-black' : 'hover:bg-zinc-100'
+    className={`group flex items-center gap-2 px-2 h-[46px] cursor-pointer ${
+      isSelected ? 'rounded-[22px] bg-zinc-100 border-2 border-black' : 'rounded-[6px] hover:rounded-[22px] border border-black hover:bg-zinc-50'
     }`}
+    style={{ transition: 'border-radius 200ms ease, background-color 150ms ease, color 150ms ease' }}
     onMouseEnter={() => {
       if (kebabRef.current) {
         const rect = kebabRef.current.getBoundingClientRect();
@@ -691,20 +733,23 @@ const NuggetRow: React.FC<NuggetRowProps> = ({
     <div className="w-2 h-2 rounded-full shrink-0 bg-acid-lime" />
     <div className="flex-1 min-w-0">
       {isRenaming ? (
-        <input
-          ref={renameInputRef}
-          value={renameValue}
-          onChange={(e) => onRenameChange(e.target.value)}
-          onBlur={onRenameCommit}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') onRenameCommit();
-            if (e.key === 'Escape') onRenameCancel();
-          }}
-          onClick={(e) => e.stopPropagation()}
-          className="w-full bg-transparent outline-none text-xs font-medium text-zinc-900 border-b border-zinc-400 py-0"
-        />
+        <div>
+          <input
+            ref={renameInputRef}
+            value={renameValue}
+            onChange={(e) => onRenameChange(e.target.value)}
+            onBlur={onRenameCommit}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') onRenameCommit();
+              if (e.key === 'Escape') onRenameCancel();
+            }}
+            onClick={(e) => e.stopPropagation()}
+            className={`w-full bg-transparent outline-none text-xs font-medium text-zinc-900 border-b py-0 ${renameError ? 'border-red-400' : 'border-zinc-400'}`}
+          />
+          {renameError && <p className="text-[9px] text-red-500 mt-0.5">{renameError}</p>}
+        </div>
       ) : (
-        <p className={`text-xs truncate ${isSelected ? 'font-medium text-black' : 'text-zinc-600'}`} title={nugget.name}>{nugget.name}</p>
+        <p className={`text-xs truncate ${isSelected ? 'font-medium text-zinc-800' : 'text-zinc-600'}`} title={nugget.name}>{nugget.name}</p>
       )}
     </div>
 
@@ -716,7 +761,7 @@ const NuggetRow: React.FC<NuggetRowProps> = ({
           const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
           onMenuToggle({ x: rect.left, y: rect.bottom + 4 });
         }}
-        className="shrink-0 p-1 text-zinc-300 hover:text-zinc-600 transition-all rounded hover:bg-zinc-200"
+        className="shrink-0 p-1 transition-all rounded text-zinc-300 hover:text-zinc-600 hover:bg-zinc-200"
         title="Nugget options"
       >
         <EllipsisIcon />
