@@ -1,0 +1,237 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Infonugget</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --acid-h1: #a1cc00;
+            --acid-h2: #8cb000;
+            --acid-h3: #779400;
+            --acid-h4: #627a00;
+            --acid-h5: #4d6100;
+            --acid-h6: #384700;
+            --acid-lime: #ccff00;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #ffffff;
+            color: #1a1a1a;
+            scrollbar-width: none;
+        }
+
+        ::-webkit-scrollbar { display: none; }
+
+        .acid-lime { color: var(--acid-lime); }
+        .bg-acid-lime { background-color: var(--acid-lime); }
+        .border-acid-lime { border-color: var(--acid-lime); }
+        
+        ::selection {
+            background-color: var(--acid-lime);
+            color: #000;
+        }
+
+        .document-prose {
+            font-family: 'Libre Baskerville', serif;
+            line-height: 1.65;
+            color: #2d2d2d;
+            font-size: 13px;
+            caret-color: #000;
+            caret-shape: bar;
+        }
+
+        /* High-End Canvas Focus */
+        .document-prose:focus { outline: none; }
+
+        .document-prose h1, .document-prose h2, .document-prose h3,
+        .document-prose h4, .document-prose h5, .document-prose h6 {
+            line-height: 1.2;
+            scroll-margin-top: 4rem;
+        }
+
+        /* Root document title — bigger than H1 */
+        .document-prose .doc-root-title {
+            font-size: 2.1rem;
+            font-weight: 900;
+            line-height: 1.15;
+            letter-spacing: -0.04em;
+            color: #0a0a0a;
+            margin-bottom: 1.5rem;
+            padding-bottom: 1rem;
+            border-bottom: 2px solid #f4f4f5;
+            outline: none;
+        }
+        .document-prose .doc-root-title:empty::before {
+            content: 'Document Title';
+            color: #d4d4d8;
+            pointer-events: none;
+        }
+
+        .document-prose h1 { font-size: 1.6rem; font-weight: 800; margin-top: 2.5rem; margin-bottom: 1rem; letter-spacing: -0.03em; color: var(--acid-h1); }
+        .document-prose h2 { font-size: 1.25rem; font-weight: 700; margin-top: 2rem; margin-bottom: 0.75rem; letter-spacing: -0.025em; color: var(--acid-h2); }
+        .document-prose h3 { font-size: 1.05rem; font-weight: 700; margin-top: 1.5rem; margin-bottom: 0.5rem; color: var(--acid-h3); }
+        .document-prose h4 { font-size: 0.95rem; font-weight: 600; margin-top: 1.25rem; margin-bottom: 0.5rem; color: var(--acid-h4); }
+
+        .document-prose p { margin-bottom: 1rem; }
+        .document-prose ul { list-style-type: disc; margin-left: 1.5rem; margin-bottom: 1rem; }
+        .document-prose ol { list-style-type: decimal; margin-left: 1.5rem; margin-bottom: 1rem; }
+
+        .document-prose table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 1.5rem 0;
+            font-size: 12px;
+            border: 1px solid #f4f4f5;
+        }
+        .document-prose th, .document-prose td {
+            border: 1px solid #f4f4f5;
+            padding: 0.6rem 0.75rem;
+            text-align: left;
+        }
+        .document-prose th {
+            background-color: #fafafa;
+            font-weight: 700;
+            color: #71717a;
+            text-transform: uppercase;
+            font-size: 10px;
+            letter-spacing: 0.1em;
+        }
+        .document-prose tr:nth-child(even) {
+            background-color: #fcfcfc;
+        }
+        .document-prose hr {
+            border: none;
+            border-top: 1px solid #f4f4f5;
+            margin: 1.5rem 0;
+        }
+
+        .document-prose blockquote {
+            border-left: 3px solid var(--acid-lime);
+            padding: 0.6rem 1rem;
+            font-style: italic;
+            color: #555;
+            background-color: #f9fafb;
+            margin: 1rem 0;
+        }
+
+        /* ─── Chat-specific prose overrides (tighter spacing for conversational context) ─── */
+        .chat-prose { font-size: 13px; line-height: 1.5; }
+        .chat-prose p { margin-bottom: 0.4rem; }
+        .chat-prose p:last-child { margin-bottom: 0; }
+        .chat-prose ul, .chat-prose ol { margin-bottom: 0.4rem; margin-left: 1.25rem; }
+        .chat-prose li { margin-bottom: 0.1rem; }
+        .chat-prose h1 { font-size: 1.15rem; font-weight: 800; margin-top: 1.1rem; margin-bottom: 0.35rem; }
+        .chat-prose h2 { font-size: 0.95rem; font-weight: 700; margin-top: 0.9rem; margin-bottom: 0.25rem; color: #4d6600; }
+        .chat-prose h3 { font-size: 0.85rem; font-weight: 600; margin-top: 0.75rem; margin-bottom: 0.2rem; color: #27272a; }
+        .chat-prose h4 { font-size: 0.8rem; font-weight: 600; margin-top: 0.6rem; margin-bottom: 0.15rem; color: #52525b; }
+        .chat-prose blockquote { margin: 0.4rem 0; padding: 0.4rem 0.75rem; }
+        .chat-prose table { margin: 0.5rem 0; }
+        .chat-prose hr { margin: 0.5rem 0; }
+        .chat-prose strong { color: #18181b; }
+
+        /* ─── System notice (document database update) ─── */
+        .system-notice-prose p { margin-bottom: 0.3rem; }
+        .system-notice-prose p:last-child { margin-bottom: 0; }
+        .system-notice-prose strong { color: #3f6212; font-weight: 700; }
+        .system-notice-prose table {
+            width: 100%;
+            table-layout: fixed;
+            border-collapse: collapse;
+            margin: 0.4rem 0;
+            border: 1px solid rgba(204, 255, 0, 0.25);
+            font-size: 10px;
+        }
+        .system-notice-prose th {
+            border: 1px solid rgba(204, 255, 0, 0.25);
+            padding: 0.3rem 0.5rem;
+            text-align: left;
+            background-color: rgba(204, 255, 0, 0.12);
+            font-weight: 700;
+            text-transform: uppercase;
+            color: #3f6212;
+        }
+        .system-notice-prose td {
+            border: 1px solid rgba(204, 255, 0, 0.2);
+            padding: 0.25rem 0.5rem;
+            text-align: center;
+            color: #3f6212;
+            word-break: break-word;
+        }
+        .system-notice-prose td:first-child {
+            text-align: left;
+            font-weight: 500;
+            overflow-wrap: anywhere;
+        }
+        .system-notice-prose td:last-child {
+            overflow-wrap: anywhere;
+        }
+        .system-notice-prose tr:nth-child(even) {
+            background-color: rgba(204, 255, 0, 0.04);
+        }
+
+        /* Active Sidebar Indicator */
+        .sidebar-node-active {
+            background-color: #f7fee7;
+            transform: translateX(4px);
+            border-radius: 4px;
+        }
+        .sidebar-node-active::before {
+            content: '';
+            position: absolute;
+            left: -12px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 3px;
+            height: 70%;
+            background-color: var(--acid-lime);
+            border-radius: 2px;
+        }
+
+        /* Glassmorphism for toolbar */
+        .glass-toolbar {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+        }
+
+        /* Zoom tool cursors */
+        .zoom-tool-zoom { cursor: zoom-in; }
+        .zoom-tool-zoom.ctrl-held,
+        .zoom-tool-zoom.ctrl-held * { cursor: zoom-out !important; }
+        .zoom-tool-zoom.alt-held,
+        .zoom-tool-zoom.alt-held * { cursor: grab !important; }
+        .zoom-tool-zoom.alt-held.panning,
+        .zoom-tool-zoom.alt-held.panning * { cursor: grabbing !important; }
+        /* Annotation tool cursors */
+        .zoom-tool-pin,
+        .zoom-tool-pin * { cursor: crosshair; }
+        .zoom-tool-crosshair,
+        .zoom-tool-crosshair * { cursor: crosshair; }
+        .zoom-tool-select { cursor: default; }
+    </style>
+<script type="importmap">
+{
+  "imports": {
+    "react-dom/": "https://esm.sh/react-dom@^19.2.4/",
+    "react/": "https://esm.sh/react@^19.2.4/",
+    "react": "https://esm.sh/react@^19.2.4",
+    "@google/genai": "https://esm.sh/@google/genai@^1.40.0",
+    "marked": "https://esm.sh/marked@15.0.7",
+    "react-dom": "https://esm.sh/react-dom@^19.2.4"
+  }
+}
+</script>
+
+</head>
+<body>
+    <div id="root"></div>
+<script type="module" src="/index.tsx"></script>
+</body>
+</html>
