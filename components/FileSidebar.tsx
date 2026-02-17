@@ -139,7 +139,7 @@ const FileSidebar: React.FC<FileSidebarProps> = ({
 
   return (
     <div
-      className={`shrink-0 border-r border-zinc-200 bg-[#fafafa] flex flex-col h-full overflow-hidden transition-all duration-300 ease-out ${isOpen ? 'w-[280px]' : 'w-[48px]'}`}
+      className={`shrink-0 border-r border-zinc-100 bg-[#fafafa] flex flex-col h-full overflow-hidden transition-all duration-300 ease-out ${isOpen ? 'w-[280px]' : 'w-[48px]'}`}
     >
       {/* Header strip — always visible */}
       <div className={`h-[50px] flex items-center shrink-0 ${isOpen ? 'px-3 justify-between' : 'justify-center'}`}>

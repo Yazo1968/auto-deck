@@ -353,7 +353,7 @@ const InsightsLabPanel = forwardRef<InsightsLabPanelHandle, InsightsLabPanelProp
     <div style={widthPercent ? { width: `${widthPercent}%` } : undefined} className="shrink-0 flex flex-col min-w-0 bg-white">
       {/* Header */}
       <div className="shrink-0 h-[36px] flex items-center justify-center px-5">
-        <span className="text-[20px] tracking-tight text-black">
+        <span className="text-[17px] tracking-tight text-zinc-900">
           <span className="font-light italic">insight</span><span className="font-semibold not-italic">lab</span>
         </span>
       </div>
@@ -387,7 +387,7 @@ const InsightsLabPanel = forwardRef<InsightsLabPanelHandle, InsightsLabPanelProp
       {/* ─── Document tabs — always visible ─── */}
       <>
         {/* Document tabs */}
-        <div className="shrink-0 flex items-start gap-0.5 px-4 pt-1 pb-1 border-y border-zinc-200">
+        <div className="shrink-0 flex items-start gap-0.5 px-4 pt-1 pb-1 border-y border-zinc-100">
           {/* Upload button — stays fixed on the left */}
           {onUploadDocuments && (
             <div className="shrink-0 flex items-center gap-0.5">

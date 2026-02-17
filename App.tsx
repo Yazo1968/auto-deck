@@ -641,17 +641,17 @@ const App: React.FC = () => {
             {selectedNugget && (() => {
               const parentProject = projects.find(p => p.nuggetIds.includes(selectedNugget.id));
               return (
-                <div className="shrink-0 h-9 flex items-center justify-center px-5 border-b border-zinc-200 bg-white relative">
-                  <div className="flex items-baseline gap-0 min-w-0 text-[16px] tracking-tight text-black">
+                <div className="shrink-0 h-9 flex items-center justify-center px-5 border-b border-zinc-100 bg-white relative">
+                  <div className="flex items-baseline gap-0 min-w-0 text-[15px] tracking-tight text-zinc-900">
                     {parentProject && (
                       <>
-                        <span className="font-light italic text-[14px]">project</span>
+                        <span className="font-light italic text-[13px] text-zinc-400">project</span>
                         <span className="mx-1.5" />
                         <span className="font-semibold not-italic truncate">{parentProject.name}</span>
-                        <span className="mx-2 text-zinc-300 font-light">|</span>
+                        <span className="mx-2.5 text-zinc-200 font-light">|</span>
                       </>
                     )}
-                    <span className="font-light italic text-[14px]">nugget</span>
+                    <span className="font-light italic text-[13px] text-zinc-400">nugget</span>
                     <span className="mx-1.5" />
                     <span className="font-semibold not-italic truncate">{selectedNugget.name}</span>
                   </div>
@@ -663,12 +663,12 @@ const App: React.FC = () => {
           {/* Nuggetcards Sidebar */}
           <aside
             style={{ width: sidebarWidth }}
-            className="border-r border-zinc-200 shrink-0 relative flex flex-col bg-[#fafafa]"
+            className="border-r border-zinc-100 shrink-0 relative flex flex-col bg-[#fafafa]"
             onDragOver={(e) => e.preventDefault()}
             onDrop={(e) => e.preventDefault()}
           >
             <div className="px-5 h-[36px] flex items-center justify-center gap-2.5 shrink-0">
-              <span className="text-[20px] tracking-tight text-black"><span className="font-light italic">cards</span><span className="font-semibold not-italic">content</span></span>
+              <span className="text-[17px] tracking-tight text-zinc-900"><span className="font-light italic">cards</span><span className="font-semibold not-italic">content</span></span>
             </div>
             {selectedNugget && (selectedNugget.headings?.length ?? 0) > 0 && (() => {
               const headings = selectedNugget.headings || [];

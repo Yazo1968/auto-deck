@@ -183,13 +183,13 @@ const AssetLab: React.FC<AssetLabProps> = ({
 
   return (
     <section className="flex-1 flex flex-col bg-white relative overflow-hidden group">
-      <div className="absolute inset-0 pointer-events-none opacity-[0.03]" style={{ backgroundImage: 'radial-gradient(#000 0.5px, transparent 0.5px)', backgroundSize: '24px 24px' }} />
+      {/* Clean canvas — no texture */}
 
       {/* ─── Design Toolbar ─── */}
       <div className="relative z-30">
         {/* ─── Title row ─── */}
         <div className="px-5 h-[36px] flex items-center justify-center shrink-0">
-          <span className="text-[20px] tracking-tight text-black"><span className="font-light italic">card</span><span className="font-semibold not-italic">lab</span></span>
+          <span className="text-[17px] tracking-tight text-zinc-900"><span className="font-light italic">card</span><span className="font-semibold not-italic">lab</span></span>
         </div>
         {/* ─── Toolbar row ─── */}
         <div ref={styleToolbarRef} className="px-5 h-[40px] mb-1 flex items-center justify-center gap-2">
