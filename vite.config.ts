@@ -41,7 +41,7 @@ export default defineConfig(({ mode }) => {
   return {
     server: {
       port: 3000,
-      host: 'localhost',
+      host: '0.0.0.0',
       proxy: {
         // Proxy Files API requests to avoid CORS issues (beta endpoint lacks preflight support)
         '/api/anthropic-files': {
