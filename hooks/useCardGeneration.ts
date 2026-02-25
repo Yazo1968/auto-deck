@@ -1,21 +1,25 @@
-
-import { useState, useCallback, useMemo } from 'react';
-import { useAppContext } from '../context/AppContext';
-import { Heading, DetailLevel, StylingOptions, ImageVersion, ReferenceImage } from '../types';
-import { DEFAULT_STYLING, withRetry, callClaude, FLASH_TEXT_CONFIG, PRO_IMAGE_CONFIG } from '../utils/ai';
+import { useState, useCallback, useMemo, useRef } from 'react';
+import { useNuggetContext } from '../context/NuggetContext';
+import { useSelectionContext } from '../context/SelectionContext';
+import { Card, DetailLevel, StylingOptions, ImageVersion, ReferenceImage, isCoverLevel } from '../types';
+import { withGeminiRetry, callClaude, PRO_IMAGE_CONFIG, getGeminiAI } from '../utils/ai';
+import { RecordUsageFn } from './useTokenUsage';
 import { extractBase64, extractMime } from '../utils/modificationEngine';
-import { buildContentPrompt, buildPlannerPrompt } from '../utils/prompts/contentGeneration';
+import { buildContentPrompt, buildPlannerPrompt, buildNativePdfSectionHint } from '../utils/prompts/contentGeneration';
 import { buildVisualizerPrompt } from '../utils/prompts/imageGeneration';
-import { GoogleGenAI } from "@google/genai";
-
-// Lazy singleton: avoids recreating the SDK instance on every API call.
-let _aiInstance: GoogleGenAI | null = null;
-function getAI(): GoogleGenAI {
-  if (!_aiInstance) {
-    _aiInstance = new GoogleGenAI({ apiKey: process.env.API_KEY });
-  }
-  return _aiInstance;
-}
+import {
+  buildCoverContentPrompt,
+  buildCoverPlannerPrompt,
+  buildCoverVisualizerPrompt,
+} from '../utils/prompts/coverGeneration';
+import { buildExpertPriming } from '../utils/prompts/promptUtils';
+import {
+  buildPwcPlannerPrompt,
+  buildPwcVisualizerPrompt,
+  buildPwcCoverPlannerPrompt,
+  buildPwcCoverVisualizerPrompt,
+} from '../utils/prompts/pwcGeneration';
+import { useToast } from '../components/ToastNotification';
 
 /**
  * Card generation pipeline — shared by the insights workflow.
@@ -24,56 +28,81 @@ function getAI(): GoogleGenAI {
 export function useCardGeneration(
   menuDraftOptions: StylingOptions,
   referenceImage: ReferenceImage | null = null,
-  useReferenceImage: boolean = false
+  useReferenceImage: boolean = false,
+  recordUsage?: RecordUsageFn,
 ) {
-  const {
-    selectedNugget,
-    updateNuggetHeading,
-  } = useAppContext();
+  const { selectedNugget, updateNuggetCard } = useNuggetContext();
+  const { activeCardId } = useSelectionContext();
 
-  // State
-  const [genStatus, setGenStatus] = useState<string>('');
+  const { addToast } = useToast();
+
+  // State — per-card status tracking for concurrent generation
+  const [genStatusMap, setGenStatusMap] = useState<Record<string, string>>({});
   const [activeLogicTab, setActiveLogicTab] = useState<DetailLevel>('Standard');
-  const [manifestHeadings, setManifestHeadings] = useState<Heading[] | null>(null);
+  const [manifestCards, setManifestCards] = useState<Card[] | null>(null);
+
+  // Store a ref to generateCard so the retry closure can call it
+  const generateCardRef = useRef<(card: Card) => Promise<void>>(undefined);
+
+  // AbortController for cancelling in-flight generation (single or batch)
+  const abortRef = useRef<AbortController | null>(null);
+
+  // Helper: set status for a specific card
+  const setCardStatus = useCallback((cardId: string, status: string) => {
+    setGenStatusMap((prev) => {
+      if (!status) {
+        // Remove the entry when clearing
+        const { [cardId]: _, ...rest } = prev;
+        return rest;
+      }
+      return { ...prev, [cardId]: status };
+    });
+  }, []);
+
+  // Derived: status for the currently-viewed card (used by AssetsPanel display)
+  const genStatus = useMemo(() => {
+    if (!activeCardId) return '';
+    return genStatusMap[activeCardId] || '';
+  }, [genStatusMap, activeCardId]);
 
   // Derived
-  const activeHeading = useMemo(() => {
+  const _activeCard = useMemo(() => {
     if (!selectedNugget) return null;
-    return selectedNugget.headings.find(h => h.id === selectedNugget.headings.find(() => true)?.id) || null;
+    return selectedNugget.cards.find((c) => c.id === selectedNugget.cards.find(() => true)?.id) || null;
   }, [selectedNugget]);
 
   const currentSynthesisContent = useMemo(() => {
-    const heading = selectedNugget?.headings.find(h => h.id === selectedNugget?.headings[0]?.id);
-    if (!heading) return '';
-    const level = (heading.settings || DEFAULT_STYLING).levelOfDetail;
-    return heading.synthesisMap?.[level] || '';
+    const card = selectedNugget?.cards.find((c) => c.id === selectedNugget?.cards[0]?.id);
+    if (!card) return '';
+    const level = card.detailLevel || 'Standard';
+    return card.synthesisMap?.[level] || '';
   }, [selectedNugget]);
 
   const contentDirty = useMemo(() => {
     if (!selectedNugget) return false;
-    const heading = selectedNugget.headings[0];
-    if (!heading?.cardUrlMap?.[activeLogicTab]) return false;
-    if (!heading.lastGeneratedContentMap?.[activeLogicTab]) return false;
-    const content = heading.synthesisMap?.[(heading.settings || DEFAULT_STYLING).levelOfDetail] || '';
-    return content !== heading.lastGeneratedContentMap[activeLogicTab];
+    const card = selectedNugget.cards[0];
+    if (!card?.cardUrlMap?.[activeLogicTab]) return false;
+    if (!card.lastGeneratedContentMap?.[activeLogicTab]) return false;
+    const content = card.synthesisMap?.[card.detailLevel || 'Standard'] || '';
+    return content !== card.lastGeneratedContentMap[activeLogicTab];
   }, [selectedNugget, activeLogicTab]);
 
   const selectedCount = useMemo(() => {
-    const headings = selectedNugget?.headings ?? [];
-    return headings.filter(h => h.selected).length;
+    const cards = selectedNugget?.cards ?? [];
+    return cards.filter((c) => c.selected).length;
   }, [selectedNugget]);
 
   // ── Helpers ──
 
-  const getSectionContext = (target: Heading, structure: Heading[], content: string): string => {
-    const targetIdx = structure.findIndex(h => h.id === target.id);
+  const getSectionContext = (target: Card, structure: Card[], content: string): string => {
+    const targetIdx = structure.findIndex((c) => c.id === target.id);
     if (targetIdx === -1) return content;
 
-    const findOffset = (heading: Heading) => {
-      const escapedText = heading.text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const findOffset = (card: Card) => {
+      const escapedText = card.text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const regex = new RegExp(`^(#{1,6})\\s+${escapedText}\\s*$`, 'g');
       const matches = [...content.matchAll(regex)];
-      const match = matches.find(m => m[0].includes(heading.text));
+      const match = matches.find((m) => m[0].includes(card.text));
       return match ? match.index : null;
     };
 
@@ -90,225 +119,457 @@ export function useCardGeneration(
     return content.substring(targetOffset, nextHeadingOffset);
   };
 
-  // ── Internal: synthesize content for a heading ──
+  // ── Internal: synthesize content for a card ──
 
-  const performSynthesis = useCallback(async (heading: Heading, level: DetailLevel) => {
-    if (!selectedNugget) return null;
-    const activeContent = selectedNugget.documents.filter(d => d.enabled !== false && d.content).map(d => d.content).join('\n\n---\n\n');
-    const activeStructure = selectedNugget.headings;
+  const performSynthesis = useCallback(
+    async (card: Card, level: DetailLevel, signal?: AbortSignal) => {
+      if (!selectedNugget) return null;
+      const enabledDocs = selectedNugget.documents.filter((d) => d.enabled !== false && (d.content || d.fileId));
+      // Split: docs with fileId go via Files API only; docs without fileId go inline
+      const fileApiDocs = enabledDocs.filter((d) => d.fileId);
+      const inlineDocs = enabledDocs.filter((d) => !d.fileId && d.content);
+      const inlineContent = inlineDocs.map((d) => d.content).join('\n\n---\n\n');
+      const activeStructure = selectedNugget.cards;
 
-    if (!activeContent || !activeStructure) return null;
+      if ((!inlineContent && fileApiDocs.length === 0) || !activeStructure) return null;
 
-    // Set synthesizing status
-    updateNuggetHeading(heading.id, h => ({
-      ...h,
-      isSynthesizingMap: { ...(h.isSynthesizingMap || {}), [level]: true }
-    }));
-
-    if (!manifestHeadings) setGenStatus(`Synthesizing ${level} Mapping for [${heading.text}]...`);
-
-    try {
-      const sectionText = getSectionContext(heading, activeStructure, activeContent);
-      const synthesisPrompt = buildContentPrompt(heading.text, level, activeContent, sectionText, true);
-
-      let synthesizedText = await callClaude(synthesisPrompt, {
-        systemBlocks: [
-          { text: 'You are an expert content synthesizer. You extract, restructure, and condense document content into infographic-ready text. Follow the formatting and word count requirements precisely.', cache: false },
-          { text: `FULL DOCUMENT CONTEXT:\n${activeContent}`, cache: true },
-        ],
-        maxTokens: 4096,
-      });
-      synthesizedText = synthesizedText.replace(/^\s*#\s+[^\n]*\n*/, '');
-      synthesizedText = `# ${heading.text}\n\n${synthesizedText.trimStart()}`;
-
-      updateNuggetHeading(heading.id, h => ({
-        ...h,
-        synthesisMap: { ...(h.synthesisMap || {}), [level]: synthesizedText },
-        isSynthesizingMap: { ...(h.isSynthesizingMap || {}), [level]: false },
+      // Set synthesizing status
+      updateNuggetCard(card.id, (c) => ({
+        ...c,
+        isSynthesizingMap: { ...(c.isSynthesizingMap || {}), [level]: true },
       }));
 
-      return synthesizedText;
-    } catch (err: any) {
-      console.error("Synthesis failed:", err);
-      updateNuggetHeading(heading.id, h => ({
-        ...h,
-        isSynthesizingMap: { ...(h.isSynthesizingMap || {}), [level]: false }
-      }));
-      return null;
-    } finally {
-      if (!manifestHeadings) setGenStatus('');
-    }
-  }, [selectedNugget, manifestHeadings, updateNuggetHeading]);
+      const isCover = isCoverLevel(level);
+      if (!manifestCards)
+        setCardStatus(
+          card.id,
+          isCover
+            ? `Generating ${level} content for [${card.text}]...`
+            : `Synthesizing ${level} Mapping for [${card.text}]...`,
+        );
 
-  // ── Generate card image for a heading ──
-
-  const generateCardForHeading = useCallback(async (heading: Heading, skipReferenceOnce?: boolean) => {
-    if (typeof window !== 'undefined' && (window as any).aistudio) {
-      const hasKey = await (window as any).aistudio.hasSelectedApiKey();
-      if (!hasKey) {
-        await (window as any).aistudio.openSelectKey();
-      }
-    }
-
-    const settings = { ...menuDraftOptions };
-    const currentLevel = settings.levelOfDetail;
-
-    // Apply settings
-    updateNuggetHeading(heading.id, h => ({ ...h, settings: { ...settings } }));
-
-    // Set generating status
-    updateNuggetHeading(heading.id, h => ({
-      ...h,
-      isGeneratingMap: { ...(h.isGeneratingMap || {}), [currentLevel]: true }
-    }));
-
-    try {
-      let contentToMap = heading.synthesisMap?.[currentLevel];
-
-      if (!contentToMap) {
-        contentToMap = await performSynthesis(heading, currentLevel) || '';
-      }
-
-      if (!contentToMap) throw new Error(`Could not obtain ${currentLevel} synthesis for mapping.`);
-
-      setGenStatus(`Planning layout for [${heading.text}]...`);
-      const ai = getAI();
-
-      let visualPlan: string | undefined;
       try {
-        const plannerResponse = await withRetry(async () => {
-          return await ai.models.generateContent({
-            model: 'gemini-3-flash-preview',
-            contents: buildPlannerPrompt(heading.text, contentToMap, settings.style, settings.aspectRatio),
-            config: { ...FLASH_TEXT_CONFIG },
-          });
-        });
-        visualPlan = plannerResponse.text || undefined;
-      } catch (err) {
-        console.warn('Planner step failed, falling back to direct visualization:', err);
-      }
+        // Section extraction only works on inline markdown content
+        const sectionText = inlineContent ? getSectionContext(card, activeStructure, inlineContent) : '';
 
-      setGenStatus(`Rendering ${settings.style} Visual [${currentLevel}] for [${heading.text}]...`);
+        // For native PDFs (no markdown), build a section hint with page boundaries
+        const nativePdfSectionHint =
+          !sectionText && fileApiDocs.length > 0 ? buildNativePdfSectionHint(card.text, enabledDocs) : '';
 
-      const shouldUseRef = !!(referenceImage && useReferenceImage && !skipReferenceOnce);
-      const lastPrompt = buildVisualizerPrompt(heading.text, contentToMap, settings, visualPlan, shouldUseRef);
+        // Branch: cover prompts vs content prompts
+        const nuggetSubject = selectedNugget?.subject;
+        const synthesisPrompt = isCover
+          ? buildCoverContentPrompt(card.text, level, inlineContent, sectionText, true, nuggetSubject)
+          : buildContentPrompt(card.text, level, inlineContent, sectionText, true, nuggetSubject);
+        const finalPrompt = synthesisPrompt + nativePdfSectionHint;
 
-      const parts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }> = [];
-      if (shouldUseRef) {
-        parts.push({
-          inlineData: {
-            mimeType: extractMime(referenceImage!.url),
-            data: extractBase64(referenceImage!.url),
-          },
-        });
-      }
-      parts.push({ text: lastPrompt });
+        const expertPriming = buildExpertPriming(nuggetSubject);
+        const systemRole = isCover
+          ? expertPriming
+            ? `${expertPriming} You also serve as an expert cover slide content designer. You create bold, concise titles, subtitles, and taglines for presentation cover slides. Follow the format and word count requirements precisely.`
+            : 'You are an expert cover slide content designer. You create bold, concise titles, subtitles, and taglines for presentation cover slides. Follow the format and word count requirements precisely.'
+          : expertPriming
+            ? `${expertPriming} You also serve as an expert content synthesizer. You extract, restructure, and condense document content into infographic-ready text. Follow the formatting and word count requirements precisely.`
+            : 'You are an expert content synthesizer. You extract, restructure, and condense document content into infographic-ready text. Follow the formatting and word count requirements precisely.';
 
-      const imageResponse = await withRetry(async () => {
-        return await ai.models.generateContent({
-          model: 'gemini-3-pro-image-preview',
-          contents: [{ parts }],
-          config: {
-            ...PRO_IMAGE_CONFIG,
-            imageConfig: {
-              aspectRatio: settings.aspectRatio,
-              imageSize: settings.resolution
-            }
-          }
-        });
-      });
-
-      let cardUrl = '';
-      for (const part of imageResponse.candidates[0].content.parts) {
-        if (part.inlineData) {
-          cardUrl = `data:${part.inlineData.mimeType || 'image/png'};base64,${part.inlineData.data}`;
-          break;
+        const systemBlocks: Array<{ text: string; cache: boolean }> = [{ text: systemRole, cache: false }];
+        // Only inline docs (no fileId) go into system blocks — avoids double-sending
+        if (inlineDocs.length > 0) {
+          systemBlocks.push({ text: `FULL DOCUMENT CONTEXT:\n${inlineContent}`, cache: true });
         }
-      }
 
-      if (cardUrl) {
-        updateNuggetHeading(heading.id, h => ({
-          ...h,
-          cardUrlMap: { ...(h.cardUrlMap || {}), [currentLevel]: cardUrl },
-          isGeneratingMap: { ...(h.isGeneratingMap || {}), [currentLevel]: false },
-          imageHistoryMap: { ...(h.imageHistoryMap || {}), [currentLevel]: undefined },
-          lastGeneratedContentMap: { ...(h.lastGeneratedContentMap || {}), [currentLevel]: contentToMap },
-          visualPlanMap: { ...(h.visualPlanMap || {}), [currentLevel]: visualPlan },
-          lastPromptMap: { ...(h.lastPromptMap || {}), [currentLevel]: lastPrompt },
+        // Build messages array with Files API document blocks prepended
+        const messages: Array<{ role: 'user' | 'assistant'; content: any }> = [];
+        if (fileApiDocs.length > 0) {
+          const docBlocks = fileApiDocs.map((d) => ({
+            type: 'document' as const,
+            source: { type: 'file' as const, file_id: d.fileId! },
+            title: d.name,
+          }));
+          messages.push({
+            role: 'user' as const,
+            content: [...docBlocks, { type: 'text' as const, text: finalPrompt }],
+          });
+        }
+
+        const { text: rawSynthesized, usage: claudeUsage } = await callClaude(
+          fileApiDocs.length > 0 ? '' : finalPrompt,
+          {
+            systemBlocks,
+            ...(fileApiDocs.length > 0 ? { messages } : {}),
+            maxTokens: isCover
+              ? level === 'TakeawayCard'
+                ? 350
+                : 256
+              : level === 'Executive'
+                ? 300
+                : level === 'Standard'
+                  ? 600
+                  : 1200,
+            signal,
+          },
+        );
+
+        recordUsage?.({
+          provider: 'claude',
+          model: 'claude-sonnet-4-6',
+          inputTokens: claudeUsage?.input_tokens ?? 0,
+          outputTokens: claudeUsage?.output_tokens ?? 0,
+          cacheReadTokens: claudeUsage?.cache_read_input_tokens ?? 0,
+          cacheWriteTokens: claudeUsage?.cache_creation_input_tokens ?? 0,
+        });
+
+        let synthesizedText = rawSynthesized;
+        if (!isCover) {
+          synthesizedText = synthesizedText.replace(/^\s*#\s+[^\n]*\n*/, '');
+          synthesizedText = `# ${card.text}\n\n${synthesizedText.trimStart()}`;
+        }
+
+        updateNuggetCard(card.id, (c) => ({
+          ...c,
+          synthesisMap: { ...(c.synthesisMap || {}), [level]: synthesizedText },
+          isSynthesizingMap: { ...(c.isSynthesizingMap || {}), [level]: false },
         }));
+
+        return synthesizedText;
+      } catch (err: any) {
+        if (err.name === 'AbortError') return null;
+        console.error('Synthesis failed:', err);
+        updateNuggetCard(card.id, (c) => ({
+          ...c,
+          isSynthesizingMap: { ...(c.isSynthesizingMap || {}), [level]: false },
+        }));
+        return null;
+      } finally {
+        if (!manifestCards) setCardStatus(card.id, '');
       }
-    } catch (err: any) {
-      console.error("Generation failed:", err);
-      console.error("Generation error details:", JSON.stringify({
-        message: err.message, status: err.status, code: err.code,
-        details: err.details, errorInfo: err.errorInfo,
-        aspectRatio: settings.aspectRatio, resolution: settings.resolution,
-        style: settings.style, level: currentLevel,
-      }, null, 2));
-      if (err.message?.includes("Requested entity was not found") || err.status === 404) {
-        if (typeof window !== 'undefined' && (window as any).aistudio) {
+    },
+    [selectedNugget, manifestCards, updateNuggetCard, setCardStatus, recordUsage],
+  );
+
+  // ── Generate card image for a card ──
+
+  const generateCard = useCallback(
+    async (card: Card, skipReferenceOnce?: boolean, externalSignal?: AbortSignal) => {
+      if (typeof window !== 'undefined' && (window as any).aistudio) {
+        const hasKey = await (window as any).aistudio.hasSelectedApiKey();
+        if (!hasKey) {
           await (window as any).aistudio.openSelectKey();
         }
       }
-      alert(`Generation failed: ${err.message || "Unknown error"}. Please try again later.`);
-    } finally {
-      if (!manifestHeadings) setGenStatus('');
-      updateNuggetHeading(heading.id, h => ({
-        ...h,
-        isGeneratingMap: { ...(h.isGeneratingMap || {}), [currentLevel]: false }
+
+      // Use provided signal (batch) or create a new AbortController (single card)
+      let signal: AbortSignal;
+      if (externalSignal) {
+        signal = externalSignal;
+      } else {
+        abortRef.current?.abort();
+        const controller = new AbortController();
+        abortRef.current = controller;
+        signal = controller.signal;
+      }
+
+      const settings = { ...menuDraftOptions };
+      const currentLevel = settings.levelOfDetail;
+      const nuggetSubject = selectedNugget?.subject;
+
+      // Set generating status
+      updateNuggetCard(card.id, (c) => ({
+        ...c,
+        isGeneratingMap: { ...(c.isGeneratingMap || {}), [currentLevel]: true },
       }));
-    }
-  }, [performSynthesis, manifestHeadings, menuDraftOptions, referenceImage, useReferenceImage, updateNuggetHeading]);
+
+      try {
+        let contentToMap = card.synthesisMap?.[currentLevel];
+
+        if (!contentToMap) {
+          contentToMap = (await performSynthesis(card, currentLevel, signal)) || '';
+        }
+
+        if (!contentToMap) throw new Error(`Could not obtain ${currentLevel} synthesis for mapping.`);
+
+        const isCover = isCoverLevel(currentLevel);
+        const isPwc = settings.style === 'PwC Corporate';
+        setCardStatus(card.id, `Planning layout for [${card.text}]...`);
+
+        if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
+
+        let visualPlan: string | undefined;
+        try {
+          const plannerPrompt = isCover
+            ? isPwc
+              ? buildPwcCoverPlannerPrompt(card.text, contentToMap, settings.style, settings.aspectRatio, currentLevel)
+              : buildCoverPlannerPrompt(card.text, contentToMap, settings.style, settings.aspectRatio, currentLevel)
+            : isPwc
+              ? buildPwcPlannerPrompt(card.text, contentToMap, settings.aspectRatio, card.visualPlanMap?.[currentLevel])
+              : buildPlannerPrompt(
+                  card.text,
+                  contentToMap,
+                  settings.aspectRatio,
+                  card.visualPlanMap?.[currentLevel],
+                  nuggetSubject,
+                );
+
+          const plannerResponse = await callClaude(plannerPrompt, { maxTokens: 4096, signal });
+          visualPlan = plannerResponse?.text || undefined;
+          if (plannerResponse?.usage) {
+            recordUsage?.({
+              provider: 'claude',
+              model: 'claude-sonnet-4-6',
+              inputTokens: plannerResponse.usage?.input_tokens ?? 0,
+              outputTokens: plannerResponse.usage?.output_tokens ?? 0,
+              cacheReadTokens: plannerResponse.usage?.cache_read_input_tokens ?? 0,
+              cacheWriteTokens: plannerResponse.usage?.cache_creation_input_tokens ?? 0,
+            });
+          }
+        } catch (err) {
+          console.warn('Planner step failed, falling back to direct visualization:', err);
+        }
+
+        setCardStatus(
+          card.id,
+          `Rendering ${settings.style} ${isCover ? 'Card' : 'Visual'} [${currentLevel}] for [${card.text}]...`,
+        );
+
+        const shouldUseRef = !!(referenceImage && useReferenceImage && !skipReferenceOnce);
+        const lastPrompt = isCover
+          ? isPwc
+            ? buildPwcCoverVisualizerPrompt(card.text, contentToMap, settings, visualPlan, shouldUseRef, currentLevel)
+            : buildCoverVisualizerPrompt(card.text, contentToMap, settings, visualPlan, shouldUseRef, currentLevel)
+          : isPwc
+            ? buildPwcVisualizerPrompt(card.text, contentToMap, settings, visualPlan, shouldUseRef)
+            : buildVisualizerPrompt(card.text, contentToMap, settings, visualPlan, shouldUseRef, nuggetSubject);
+
+        if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
+
+        const parts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }> = [];
+        if (shouldUseRef) {
+          parts.push({
+            inlineData: {
+              mimeType: extractMime(referenceImage!.url),
+              data: extractBase64(referenceImage!.url),
+            },
+          });
+        }
+        parts.push({ text: lastPrompt });
+
+        const imageResponse = await withGeminiRetry(async () => {
+          const ai = await getGeminiAI();
+          return await ai.models.generateContent({
+            model: 'gemini-3-pro-image-preview',
+            contents: [{ parts }],
+            config: {
+              ...PRO_IMAGE_CONFIG,
+              imageConfig: {
+                aspectRatio: settings.aspectRatio,
+                imageSize: settings.resolution,
+              },
+            },
+          });
+        });
+
+        if (imageResponse?.usageMetadata) {
+          recordUsage?.({
+            provider: 'gemini',
+            model: 'gemini-3-pro-image-preview',
+            inputTokens: imageResponse.usageMetadata?.promptTokenCount ?? 0,
+            outputTokens: imageResponse.usageMetadata?.candidatesTokenCount ?? 0,
+          });
+        }
+
+        let cardUrl = '';
+        const candidate = imageResponse.candidates?.[0];
+        const responseParts = candidate?.content?.parts;
+        if (!responseParts) {
+          throw new Error('No image data received from the AI model. The response may have been blocked or empty.');
+        }
+        for (const part of responseParts) {
+          if (part.inlineData) {
+            cardUrl = `data:${part.inlineData.mimeType || 'image/png'};base64,${part.inlineData.data}`;
+            break;
+          }
+        }
+
+        if (cardUrl) {
+          updateNuggetCard(card.id, (c) => {
+            // Preserve version history: keep existing versions and append the new generation
+            const existingHistory = c.imageHistoryMap?.[currentLevel] || [];
+            const prevUrl = c.cardUrlMap?.[currentLevel];
+            const updatedHistory = [...existingHistory];
+            // If there's a previous image that isn't already the last entry, add it
+            if (
+              prevUrl &&
+              (updatedHistory.length === 0 || updatedHistory[updatedHistory.length - 1].imageUrl !== prevUrl)
+            ) {
+              updatedHistory.push({
+                imageUrl: prevUrl,
+                timestamp: Date.now(),
+                label: updatedHistory.length === 0 ? 'Original' : `Generation ${updatedHistory.length}`,
+              });
+            }
+            // Add the new generation
+            updatedHistory.push({
+              imageUrl: cardUrl,
+              timestamp: Date.now(),
+              label: `Generation ${updatedHistory.length + 1}`,
+            });
+            // Cap at 10 versions
+            while (updatedHistory.length > 10) updatedHistory.shift();
+            return {
+              ...c,
+              cardUrlMap: { ...(c.cardUrlMap || {}), [currentLevel]: cardUrl },
+              isGeneratingMap: { ...(c.isGeneratingMap || {}), [currentLevel]: false },
+              imageHistoryMap: { ...(c.imageHistoryMap || {}), [currentLevel]: updatedHistory },
+              lastGeneratedContentMap: { ...(c.lastGeneratedContentMap || {}), [currentLevel]: contentToMap },
+              visualPlanMap: { ...(c.visualPlanMap || {}), [currentLevel]: visualPlan },
+              lastPromptMap: { ...(c.lastPromptMap || {}), [currentLevel]: lastPrompt },
+            };
+          });
+        }
+      } catch (err: any) {
+        if (err.name === 'AbortError') return;
+        console.error('Generation failed:', err);
+        console.error(
+          'Generation error details:',
+          JSON.stringify(
+            {
+              message: err.message,
+              status: err.status,
+              code: err.code,
+              details: err.details,
+              errorInfo: err.errorInfo,
+              aspectRatio: settings.aspectRatio,
+              resolution: settings.resolution,
+              style: settings.style,
+              level: currentLevel,
+            },
+            null,
+            2,
+          ),
+        );
+        if (err.message?.includes('Requested entity was not found') || err.status === 404) {
+          if (typeof window !== 'undefined' && (window as any).aistudio) {
+            await (window as any).aistudio.openSelectKey();
+          }
+        }
+
+        // Determine if this was a retryable error (503/overloaded/rate-limit)
+        const msg = (err.message || '').toLowerCase();
+        const isOverloaded =
+          msg.includes('503') ||
+          msg.includes('unavailable') ||
+          msg.includes('high demand') ||
+          msg.includes('overloaded');
+
+        addToast({
+          type: isOverloaded ? 'warning' : 'error',
+          message: isOverloaded
+            ? `Model overloaded — generation for "${card.text}" failed after retries`
+            : `Generation failed for "${card.text}"`,
+          detail: isOverloaded
+            ? 'The AI model is experiencing high demand. Try again in a moment.'
+            : err.message || 'Unknown error',
+          onRetry: () => {
+            generateCardRef.current?.(card);
+          },
+          duration: isOverloaded ? 12000 : 8000,
+        });
+      } finally {
+        if (!manifestCards) setCardStatus(card.id, '');
+        updateNuggetCard(card.id, (c) => ({
+          ...c,
+          isGeneratingMap: { ...(c.isGeneratingMap || {}), [currentLevel]: false },
+        }));
+      }
+    },
+    [
+      performSynthesis,
+      manifestCards,
+      menuDraftOptions,
+      referenceImage,
+      useReferenceImage,
+      updateNuggetCard,
+      setCardStatus,
+      addToast,
+      recordUsage,
+      selectedNugget?.subject,
+    ],
+  );
+
+  // Keep ref in sync so retry closures always call the latest generateCard
+  generateCardRef.current = generateCard;
 
   // ── Batch operations ──
 
   const handleGenerateAll = useCallback(() => {
-    const headings = selectedNugget?.headings;
-    if (!headings) return;
+    const cards = selectedNugget?.cards;
+    if (!cards) return;
 
-    const selectedItems = headings.filter(h => h.selected);
+    const selectedItems = cards.filter((c) => c.selected);
     if (selectedItems.length === 0) {
-      alert("Please select items in the sidebar first.");
+      addToast({ type: 'info', message: 'Please select items in the sidebar first.', duration: 4000 });
       return;
     }
 
-    setManifestHeadings(selectedItems);
-  }, [selectedNugget]);
+    setManifestCards(selectedItems);
+  }, [selectedNugget, addToast, setManifestCards]);
 
   const executeBatchCardGeneration = async () => {
-    if (!manifestHeadings) return;
-    const selectedItems = [...manifestHeadings];
-    setManifestHeadings(null);
+    if (!manifestCards) return;
+    const selectedItems = [...manifestCards];
+    setManifestCards(null);
 
-    setGenStatus(`Executing batch card generation for ${selectedItems.length} items...`);
+    // Create shared abort controller for the batch
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    // Set initial batch status on each card
     for (const item of selectedItems) {
-      await generateCardForHeading(item);
+      setCardStatus(item.id, `Queued for batch generation...`);
     }
-    setGenStatus('');
+    await Promise.allSettled(selectedItems.map((item) => generateCard(item, undefined, controller.signal)));
+    // Individual card statuses are cleared in generateCard's finally block
   };
 
   // ── Image modification handler ──
 
-  const handleImageModified = useCallback((headingId: string, newImageUrl: string, history: ImageVersion[]) => {
-    const headings = selectedNugget?.headings ?? [];
-    const heading = headings.find(h => h.id === headingId);
-    const level = (heading?.settings || DEFAULT_STYLING).levelOfDetail;
-    const currentContent = heading?.synthesisMap?.[level] || '';
+  const handleImageModified = useCallback(
+    (cardId: string, newImageUrl: string, history: ImageVersion[]) => {
+      const cards = selectedNugget?.cards ?? [];
+      const card = cards.find((c) => c.id === cardId);
+      const level = card?.detailLevel || 'Standard';
+      const currentContent = card?.synthesisMap?.[level] || '';
 
-    updateNuggetHeading(headingId, h => ({
-      ...h,
-      cardUrlMap: { ...(h.cardUrlMap || {}), [level]: newImageUrl },
-      imageHistoryMap: { ...(h.imageHistoryMap || {}), [level]: history },
-      lastGeneratedContentMap: { ...(h.lastGeneratedContentMap || {}), [level]: currentContent || h.lastGeneratedContentMap?.[level] },
-    }));
-  }, [selectedNugget, updateNuggetHeading]);
+      updateNuggetCard(cardId, (c) => ({
+        ...c,
+        cardUrlMap: { ...(c.cardUrlMap || {}), [level]: newImageUrl },
+        imageHistoryMap: { ...(c.imageHistoryMap || {}), [level]: history },
+        lastGeneratedContentMap: {
+          ...(c.lastGeneratedContentMap || {}),
+          [level]: currentContent || c.lastGeneratedContentMap?.[level],
+        },
+      }));
+    },
+    [selectedNugget, updateNuggetCard],
+  );
+
+  const stopGeneration = useCallback(() => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+  }, []);
 
   return {
     genStatus,
-    activeLogicTab, setActiveLogicTab,
-    manifestHeadings, setManifestHeadings,
-    currentSynthesisContent, contentDirty, selectedCount,
-    generateCardForHeading,
+    activeLogicTab,
+    setActiveLogicTab,
+    manifestCards,
+    setManifestCards,
+    currentSynthesisContent,
+    contentDirty,
+    selectedCount,
+    generateCard,
+    stopGeneration,
     handleGenerateAll,
     executeBatchCardGeneration,
     handleImageModified,

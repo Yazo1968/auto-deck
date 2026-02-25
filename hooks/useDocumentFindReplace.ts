@@ -1,8 +1,7 @@
-
 import { useState, useCallback, useRef, useEffect } from 'react';
 
 // Inline styles — Tailwind CDN can't do opacity variants on custom colors
-const MARK_ACTIVE = 'background-color:rgba(204,255,0,0.55);border-radius:2px;padding:1px 0;color:inherit;';
+const MARK_ACTIVE = 'background-color:rgba(42,159,212,0.45);border-radius:2px;padding:1px 0;color:inherit;';
 const MARK_INACTIVE = 'background-color:rgba(250,204,21,0.35);border-radius:2px;padding:1px 0;color:inherit;';
 
 /**
@@ -35,16 +34,19 @@ export function useDocumentFindReplace(
   findMatchCountRef.current = findMatchCount;
 
   // ── Observer pause/resume ──
-  const withObserverPaused = useCallback(<T,>(fn: () => T): T => {
-    const observer = editorObserverRef.current;
-    const editor = editorRef.current;
-    if (observer) observer.disconnect();
-    const result = fn();
-    if (observer && editor) {
-      observer.observe(editor, { childList: true, subtree: true, characterData: true });
-    }
-    return result;
-  }, [editorObserverRef, editorRef]);
+  const withObserverPaused = useCallback(
+    <T>(fn: () => T): T => {
+      const observer = editorObserverRef.current;
+      const editor = editorRef.current;
+      if (observer) observer.disconnect();
+      const result = fn();
+      if (observer && editor) {
+        observer.observe(editor, { childList: true, subtree: true, characterData: true });
+      }
+      return result;
+    },
+    [editorObserverRef, editorRef],
+  );
 
   // ── Low-level DOM helpers ──
 
@@ -52,7 +54,7 @@ export function useDocumentFindReplace(
     const editor = editorRef.current;
     if (!editor) return;
     const marks = editor.querySelectorAll('mark[data-find]');
-    marks.forEach(mark => {
+    marks.forEach((mark) => {
       const parent = mark.parentNode;
       if (parent) {
         parent.replaceChild(document.createTextNode(mark.textContent || ''), mark);
@@ -61,117 +63,129 @@ export function useDocumentFindReplace(
     });
   }, [editorRef]);
 
-  const scrollToMark = useCallback((mark: HTMLElement) => {
-    const scrollParent = scrollContainerRef.current;
-    if (!mark || !scrollParent) return;
-    const containerRect = scrollParent.getBoundingClientRect();
-    const markRect = mark.getBoundingClientRect();
-    if (markRect.top < containerRect.top || markRect.bottom > containerRect.bottom) {
-      scrollParent.scrollTo({
-        top: markRect.top - containerRect.top + scrollParent.scrollTop - 100,
-        behavior: 'smooth',
-      });
-    }
-  }, [scrollContainerRef]);
+  const scrollToMark = useCallback(
+    (mark: HTMLElement) => {
+      const scrollParent = scrollContainerRef.current;
+      if (!mark || !scrollParent) return;
+      const containerRect = scrollParent.getBoundingClientRect();
+      const markRect = mark.getBoundingClientRect();
+      if (markRect.top < containerRect.top || markRect.bottom > containerRect.bottom) {
+        scrollParent.scrollTo({
+          top: markRect.top - containerRect.top + scrollParent.scrollTop - 100,
+          behavior: 'smooth',
+        });
+      }
+    },
+    [scrollContainerRef],
+  );
 
   // ── Core: inject marks into editor DOM ──
-  const injectMarks = useCallback((query: string, activeIdx: number, matchCase: boolean): number => {
-    const editor = editorRef.current;
-    if (!editor || !query) return 0;
+  const injectMarks = useCallback(
+    (query: string, activeIdx: number, matchCase: boolean): number => {
+      const editor = editorRef.current;
+      if (!editor || !query) return 0;
 
-    const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT, null);
-    const textNodes: Text[] = [];
-    let node: Node | null;
-    while ((node = walker.nextNode())) {
-      if ((node as Text).parentElement?.closest('[data-find-bar]')) continue;
-      textNodes.push(node as Text);
-    }
-
-    const cmpQuery = matchCase ? query : query.toLowerCase();
-    let count = 0;
-
-    for (const textNode of textNodes) {
-      const text = textNode.textContent || '';
-      const cmpText = matchCase ? text : text.toLowerCase();
-      let idx = cmpText.indexOf(cmpQuery);
-      if (idx === -1) continue;
-
-      const frag = document.createDocumentFragment();
-      let last = 0;
-
-      while (idx !== -1) {
-        if (idx > last) frag.appendChild(document.createTextNode(text.slice(last, idx)));
-
-        const mark = document.createElement('mark');
-        mark.setAttribute('data-find', 'true');
-        mark.textContent = text.slice(idx, idx + query.length);
-        mark.setAttribute('style', count === activeIdx ? MARK_ACTIVE : MARK_INACTIVE);
-        if (count === activeIdx) mark.setAttribute('data-find-active', 'true');
-        frag.appendChild(mark);
-
-        count++;
-        last = idx + query.length;
-        idx = cmpText.indexOf(cmpQuery, last);
+      const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT, null);
+      const textNodes: Text[] = [];
+      let node: Node | null;
+      while ((node = walker.nextNode())) {
+        if ((node as Text).parentElement?.closest('[data-find-bar]')) continue;
+        textNodes.push(node as Text);
       }
 
-      if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
-      textNode.parentNode?.replaceChild(frag, textNode);
-    }
+      const cmpQuery = matchCase ? query : query.toLowerCase();
+      let count = 0;
 
-    return count;
-  }, [editorRef]);
+      for (const textNode of textNodes) {
+        const text = textNode.textContent || '';
+        const cmpText = matchCase ? text : text.toLowerCase();
+        let idx = cmpText.indexOf(cmpQuery);
+        if (idx === -1) continue;
+
+        const frag = document.createDocumentFragment();
+        let last = 0;
+
+        while (idx !== -1) {
+          if (idx > last) frag.appendChild(document.createTextNode(text.slice(last, idx)));
+
+          const mark = document.createElement('mark');
+          mark.setAttribute('data-find', 'true');
+          mark.textContent = text.slice(idx, idx + query.length);
+          mark.setAttribute('style', count === activeIdx ? MARK_ACTIVE : MARK_INACTIVE);
+          if (count === activeIdx) mark.setAttribute('data-find-active', 'true');
+          frag.appendChild(mark);
+
+          count++;
+          last = idx + query.length;
+          idx = cmpText.indexOf(cmpQuery, last);
+        }
+
+        if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
+        textNode.parentNode?.replaceChild(frag, textNode);
+      }
+
+      return count;
+    },
+    [editorRef],
+  );
 
   // ── Rebuild: clear + inject + scroll (all inside observer pause) ──
-  const rebuild = useCallback((query?: string, activeIdx?: number, matchCase?: boolean) => {
-    const q = query ?? findQueryRef.current;
-    const idx = activeIdx ?? findActiveIndexRef.current;
-    const mc = matchCase ?? findMatchCaseRef.current;
+  const rebuild = useCallback(
+    (query?: string, activeIdx?: number, matchCase?: boolean) => {
+      const q = query ?? findQueryRef.current;
+      const idx = activeIdx ?? findActiveIndexRef.current;
+      const mc = matchCase ?? findMatchCaseRef.current;
 
-    const count = withObserverPaused(() => {
-      clearMarks();
-      if (!q) return 0;
-      return injectMarks(q, idx, mc);
-    });
-
-    setFindMatchCount(count);
-    if (idx >= count && count > 0) {
-      setFindActiveIndex(0);
-      withObserverPaused(() => {
+      const count = withObserverPaused(() => {
         clearMarks();
-        injectMarks(q, 0, mc);
+        if (!q) return 0;
+        return injectMarks(q, idx, mc);
       });
-    }
 
-    if (count > 0) {
-      const editor = editorRef.current;
-      const activeMark = editor?.querySelector('mark[data-find-active]') as HTMLElement;
-      if (activeMark) requestAnimationFrame(() => scrollToMark(activeMark));
-    }
+      setFindMatchCount(count);
+      if (idx >= count && count > 0) {
+        setFindActiveIndex(0);
+        withObserverPaused(() => {
+          clearMarks();
+          injectMarks(q, 0, mc);
+        });
+      }
 
-    return count;
-  }, [withObserverPaused, clearMarks, injectMarks, scrollToMark, editorRef]);
+      if (count > 0) {
+        const editor = editorRef.current;
+        const activeMark = editor?.querySelector('mark[data-find-active]') as HTMLElement;
+        if (activeMark) requestAnimationFrame(() => scrollToMark(activeMark));
+      }
+
+      return count;
+    },
+    [withObserverPaused, clearMarks, injectMarks, scrollToMark, editorRef],
+  );
 
   // ── Lightweight: just swap styles on existing marks ──
-  const swapActive = useCallback((activeIdx: number) => {
-    const editor = editorRef.current;
-    if (!editor) return;
-    const marks = Array.from(editor.querySelectorAll('mark[data-find]')) as HTMLElement[];
-    if (marks.length === 0) return;
+  const swapActive = useCallback(
+    (activeIdx: number) => {
+      const editor = editorRef.current;
+      if (!editor) return;
+      const marks = Array.from(editor.querySelectorAll('mark[data-find]')) as HTMLElement[];
+      if (marks.length === 0) return;
 
-    for (let i = 0; i < marks.length; i++) {
-      if (i === activeIdx) {
-        marks[i].setAttribute('style', MARK_ACTIVE);
-        marks[i].setAttribute('data-find-active', 'true');
-      } else {
-        marks[i].setAttribute('style', MARK_INACTIVE);
-        marks[i].removeAttribute('data-find-active');
+      for (let i = 0; i < marks.length; i++) {
+        if (i === activeIdx) {
+          marks[i].setAttribute('style', MARK_ACTIVE);
+          marks[i].setAttribute('data-find-active', 'true');
+        } else {
+          marks[i].setAttribute('style', MARK_INACTIVE);
+          marks[i].removeAttribute('data-find-active');
+        }
       }
-    }
 
-    if (activeIdx >= 0 && activeIdx < marks.length) {
-      requestAnimationFrame(() => scrollToMark(marks[activeIdx]));
-    }
-  }, [editorRef, scrollToMark]);
+      if (activeIdx >= 0 && activeIdx < marks.length) {
+        requestAnimationFrame(() => scrollToMark(marks[activeIdx]));
+      }
+    },
+    [editorRef, scrollToMark],
+  );
 
   // ── Effects ──
 
@@ -199,13 +213,13 @@ export function useDocumentFindReplace(
   const findNext = useCallback(() => {
     const count = findMatchCountRef.current;
     if (count === 0) return;
-    setFindActiveIndex(prev => (prev + 1) % count);
+    setFindActiveIndex((prev) => (prev + 1) % count);
   }, []);
 
   const findPrev = useCallback(() => {
     const count = findMatchCountRef.current;
     if (count === 0) return;
-    setFindActiveIndex(prev => (prev - 1 + count) % count);
+    setFindActiveIndex((prev) => (prev - 1 + count) % count);
   }, []);
 
   const closeFindBar = useCallback(() => {
@@ -276,16 +290,23 @@ export function useDocumentFindReplace(
   }, [withObserverPaused, clearMarks]);
 
   return {
-    showFind, setShowFind,
-    findQuery, setFindQuery,
-    replaceQuery, setReplaceQuery,
+    showFind,
+    setShowFind,
+    findQuery,
+    setFindQuery,
+    replaceQuery,
+    setReplaceQuery,
     findMatchCount,
-    findActiveIndex, setFindActiveIndex,
-    findMatchCase, setFindMatchCase,
+    findActiveIndex,
+    setFindActiveIndex,
+    findMatchCase,
+    setFindMatchCase,
     findInputRef,
-    findNext, findPrev,
+    findNext,
+    findPrev,
     closeFindBar,
-    handleReplace, handleReplaceAll,
+    handleReplace,
+    handleReplaceAll,
     clearFindHighlights,
   };
 }

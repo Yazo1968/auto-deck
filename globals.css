@@ -1,0 +1,528 @@
+@import 'tailwindcss';
+
+/* Override default media-based dark mode with class-based (.dark on <html>) */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ─── CSS Custom Properties ─── */
+
+:root {
+  --acid-h1: #27272a;
+  --acid-h2: #3f3f46;
+  --acid-h3: #52525b;
+  --acid-h4: #71717a;
+  --acid-h5: #71717a;
+  --acid-h6: #71717a;
+  --accent-blue: #2a9fd4;
+}
+.dark {
+  --acid-h1: #f4f4f5;
+  --acid-h2: #e4e4e7;
+  --acid-h3: #d4d4d8;
+  --acid-h4: #a1a1aa;
+  --acid-h5: #a1a1aa;
+  --acid-h6: #a1a1aa;
+}
+
+/* ─── Panel animations ─── */
+
+@keyframes panel-roll-out {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+@keyframes panel-roll-in {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
+  }
+}
+
+/* ─── Base body styles ─── */
+
+body {
+  font-family: 'Inter', sans-serif;
+  background-color: #ffffff;
+  color: #27272a;
+  scrollbar-width: none;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  transition:
+    background-color 0.2s,
+    color 0.2s;
+}
+.dark body {
+  background-color: #18181b;
+  color: #f4f4f5;
+}
+
+::-webkit-scrollbar {
+  display: none;
+}
+
+.accent-blue {
+  color: var(--accent-blue);
+}
+.bg-accent-blue {
+  background-color: var(--accent-blue);
+}
+.border-accent-blue {
+  border-color: var(--accent-blue);
+}
+
+::selection {
+  background-color: rgba(160, 200, 220, 0.5);
+  color: #000;
+}
+.dark ::selection {
+  background-color: rgba(42, 159, 212, 0.4);
+  color: #fff;
+}
+
+/* ─── Document prose typography ─── */
+
+.document-prose {
+  font-family: 'Libre Baskerville', serif;
+  line-height: 1.65;
+  color: #3f3f46;
+  font-size: 12px;
+  caret-color: #000;
+  caret-shape: bar;
+}
+.dark .document-prose {
+  color: #d4d4d8;
+  caret-color: #fff;
+}
+
+/* High-End Canvas Focus */
+.document-prose:focus {
+  outline: 2px solid var(--accent-blue);
+  outline-offset: -2px;
+}
+
+.document-prose h1,
+.document-prose h2,
+.document-prose h3,
+.document-prose h4,
+.document-prose h5,
+.document-prose h6 {
+  line-height: 1.2;
+  scroll-margin-top: 4rem;
+}
+
+/* Root document title — bigger than H1 */
+.document-prose .doc-root-title {
+  font-size: 24px;
+  font-weight: 900;
+  line-height: 1.15;
+  letter-spacing: -0.04em;
+  color: #27272a;
+  margin-bottom: 1.5rem;
+  padding-bottom: 1rem;
+  border-bottom: 2px solid #f4f4f5;
+  outline: none;
+}
+.dark .document-prose .doc-root-title {
+  color: #f4f4f5;
+  border-bottom-color: #52525b;
+}
+.document-prose .doc-root-title:empty::before {
+  content: 'Document Title';
+  color: #a1a1aa;
+  pointer-events: none;
+}
+.dark .document-prose .doc-root-title:empty::before {
+  color: #71717a;
+}
+
+.document-prose h1 {
+  font-size: 20px;
+  font-weight: 800;
+  margin-top: 2.5rem;
+  margin-bottom: 1rem;
+  letter-spacing: -0.03em;
+  line-height: 1.2;
+  color: var(--acid-h1);
+}
+.document-prose h2 {
+  font-size: 16px;
+  font-weight: 700;
+  margin-top: 2rem;
+  margin-bottom: 0.75rem;
+  letter-spacing: -0.025em;
+  line-height: 1.25;
+  color: var(--acid-h2);
+}
+.document-prose h3 {
+  font-size: 14px;
+  font-weight: 700;
+  margin-top: 1.5rem;
+  margin-bottom: 0.5rem;
+  line-height: 1.3;
+  color: var(--acid-h3);
+}
+.document-prose h4 {
+  font-size: 13px;
+  font-weight: 600;
+  margin-top: 1.25rem;
+  margin-bottom: 0.5rem;
+  line-height: 1.35;
+  color: var(--acid-h4);
+}
+
+.document-prose p {
+  margin-bottom: 1rem;
+}
+.document-prose ul {
+  list-style-type: disc;
+  margin-left: 1.5rem;
+  margin-bottom: 1rem;
+}
+.document-prose ol {
+  list-style-type: decimal;
+  margin-left: 1.5rem;
+  margin-bottom: 1rem;
+}
+
+.document-prose table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1.5rem 0;
+  font-size: 11px;
+  border: 1px solid #f4f4f5;
+}
+.dark .document-prose table {
+  border-color: #52525b;
+}
+.document-prose th,
+.document-prose td {
+  border: 1px solid #f4f4f5;
+  padding: 0.6rem 0.75rem;
+  text-align: left;
+}
+.dark .document-prose th,
+.dark .document-prose td {
+  border-color: #52525b;
+}
+.document-prose th {
+  background-color: #fafafa;
+  font-weight: 700;
+  color: #71717a;
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+}
+.dark .document-prose th {
+  background-color: #27272a;
+  color: #a1a1aa;
+}
+.document-prose tr:nth-child(even) {
+  background-color: #fcfcfc;
+}
+.dark .document-prose tr:nth-child(even) {
+  background-color: #1f1f23;
+}
+.document-prose hr {
+  border: none;
+  border-top: 1px solid #f4f4f5;
+  margin: 1.5rem 0;
+}
+.dark .document-prose hr {
+  border-top-color: #52525b;
+}
+
+.document-prose blockquote {
+  border-left: 3px solid var(--accent-blue);
+  padding: 0.6rem 1rem;
+  font-style: italic;
+  color: #52525b;
+  background-color: #f9fafb;
+  margin: 1rem 0;
+}
+.dark .document-prose blockquote {
+  color: #a1a1aa;
+  background-color: #1f1f23;
+}
+
+/* ─── Chat-specific prose overrides (tighter spacing for conversational context) ─── */
+
+.chat-prose {
+  font-size: 12px;
+  line-height: 1.5;
+}
+.chat-prose p {
+  margin-bottom: 0.4rem;
+}
+.chat-prose p:last-child {
+  margin-bottom: 0;
+}
+.chat-prose ul,
+.chat-prose ol {
+  margin-bottom: 0.4rem;
+  margin-left: 1.25rem;
+}
+.chat-prose li {
+  margin-bottom: 0.1rem;
+}
+.chat-prose h1 {
+  font-size: 16px;
+  font-weight: 800;
+  margin-top: 1.1rem;
+  margin-bottom: 0.35rem;
+  line-height: 1.2;
+}
+.chat-prose h2 {
+  font-size: 14px;
+  font-weight: 700;
+  margin-top: 0.9rem;
+  margin-bottom: 0.25rem;
+  line-height: 1.25;
+  color: #3f3f46;
+}
+.chat-prose h3 {
+  font-size: 13px;
+  font-weight: 600;
+  margin-top: 0.75rem;
+  margin-bottom: 0.2rem;
+  line-height: 1.3;
+  color: #27272a;
+}
+.chat-prose h4 {
+  font-size: 12px;
+  font-weight: 600;
+  margin-top: 0.6rem;
+  margin-bottom: 0.15rem;
+  line-height: 1.35;
+  color: #52525b;
+}
+.chat-prose blockquote {
+  margin: 0.4rem 0;
+  padding: 0.4rem 0.75rem;
+}
+.chat-prose table {
+  margin: 0.5rem 0;
+}
+.chat-prose hr {
+  margin: 0.5rem 0;
+}
+.chat-prose strong {
+  color: #27272a;
+}
+.dark .chat-prose h2 {
+  color: #e4e4e7;
+}
+.dark .chat-prose h3 {
+  color: #f4f4f5;
+}
+.dark .chat-prose h4 {
+  color: #a1a1aa;
+}
+.dark .chat-prose strong {
+  color: #f4f4f5;
+}
+
+/* ─── System notice (document database update) ─── */
+
+.system-notice-prose p {
+  margin-bottom: 0.3rem;
+}
+.system-notice-prose p:last-child {
+  margin-bottom: 0;
+}
+.system-notice-prose strong {
+  color: #1a7aaa;
+  font-weight: 700;
+}
+.system-notice-prose table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  margin: 0.4rem 0;
+  border: 1px solid rgba(42, 159, 212, 0.3);
+  font-size: 10px;
+}
+.system-notice-prose th {
+  border: 1px solid rgba(42, 159, 212, 0.3);
+  padding: 0.3rem 0.5rem;
+  text-align: left;
+  background-color: rgba(42, 159, 212, 0.12);
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #1a7aaa;
+}
+.system-notice-prose td {
+  border: 1px solid rgba(42, 159, 212, 0.25);
+  padding: 0.25rem 0.5rem;
+  text-align: center;
+  color: #1a7aaa;
+  word-break: break-word;
+}
+.system-notice-prose td:first-child {
+  text-align: left;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.system-notice-prose td:last-child {
+  overflow-wrap: anywhere;
+}
+.system-notice-prose tr:nth-child(even) {
+  background-color: rgba(42, 159, 212, 0.05);
+}
+
+/* ─── Tree highlight tokens — adapt to light/dark ─── */
+
+:root {
+  --tree-active: #2289b5;
+  --tree-text: #1a7aaa;
+  --tree-icon: #4d9ab5;
+  --tree-text-dim: #7a9eac;
+  --tree-icon-dim: #9bb8c4;
+}
+.dark {
+  --tree-active: #4db8e0;
+  --tree-text: #5abdd9;
+  --tree-icon: #3d8ea8;
+  --tree-text-dim: #6ba3b5;
+  --tree-icon-dim: #5f8fa0;
+}
+
+/* ─── Active Sidebar Indicator ─── */
+
+.sidebar-node-active {
+  background-color: rgba(160, 200, 220, 0.4);
+  transform: translateX(4px);
+  border-radius: 4px;
+}
+.dark .sidebar-node-active {
+  background-color: rgba(42, 159, 212, 0.2);
+}
+.sidebar-node-active::before {
+  content: '';
+  position: absolute;
+  left: -12px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 70%;
+  background-color: rgb(140, 180, 205);
+  border-radius: 2px;
+}
+.dark .sidebar-node-active::before {
+  background-color: rgba(42, 159, 212, 0.6);
+}
+
+/* ─── Glassmorphism for toolbar ─── */
+
+.glass-toolbar {
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+.dark .glass-toolbar {
+  background: rgba(24, 24, 27, 0.95);
+}
+
+/* ─── Zoom/Annotation tool cursors ─── */
+
+.zoom-tool-zoom {
+  cursor: zoom-in;
+}
+.zoom-tool-zoom.ctrl-held,
+.zoom-tool-zoom.ctrl-held * {
+  cursor: zoom-out !important;
+}
+.zoom-tool-zoom.alt-held,
+.zoom-tool-zoom.alt-held * {
+  cursor: grab !important;
+}
+.zoom-tool-zoom.alt-held.panning,
+.zoom-tool-zoom.alt-held.panning * {
+  cursor: grabbing !important;
+}
+.zoom-tool-pin,
+.zoom-tool-pin * {
+  cursor: crosshair;
+}
+.zoom-tool-crosshair,
+.zoom-tool-crosshair * {
+  cursor: crosshair;
+}
+.zoom-tool-select {
+  cursor: default;
+}
+
+/* ─── PDF.js TextLayer (for text selection in PDF viewer) ─── */
+
+.textLayer {
+  position: absolute;
+  text-align: initial;
+  inset: 0;
+  overflow: clip;
+  opacity: 1;
+  line-height: 1;
+  -webkit-text-size-adjust: none;
+  -moz-text-size-adjust: none;
+  text-size-adjust: none;
+  forced-color-adjust: none;
+  transform-origin: 0 0;
+  z-index: 2;
+  --min-font-size: 1;
+  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+  --min-font-size-inv: calc(1 / var(--min-font-size));
+}
+.textLayer :is(span, br) {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+}
+.textLayer span.markedContent {
+  top: 0;
+  height: 0;
+}
+.textLayer .markedContent {
+  display: contents;
+}
+.textLayer > :not(.markedContent),
+.textLayer .markedContent span:not(.markedContent) {
+  z-index: 1;
+  --font-height: 0;
+  font-size: calc(var(--text-scale-factor) * var(--font-height));
+  --scale-x: 1;
+  --rotate: 0deg;
+  transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+}
+.textLayer span[role='img'] {
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  user-select: none;
+  cursor: default;
+}
+.textLayer ::selection {
+  background: rgba(42, 159, 212, 0.35);
+}
+.dark .textLayer ::selection {
+  background: rgba(42, 159, 212, 0.5);
+}
+.textLayer br::selection {
+  background: transparent;
+}
+.textLayer .endOfContent {
+  display: block;
+  position: absolute;
+  inset: 100% 0 0;
+  z-index: 0;
+  cursor: default;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  user-select: none;
+}
+.textLayer.selecting .endOfContent {
+  top: 0;
+}

@@ -1,4 +1,22 @@
 import { StylingOptions } from '../../types';
+import { STYLE_IDENTITIES } from '../ai';
+
+// ─────────────────────────────────────────────────────────────────
+// Expert Priming — Subject-Based Domain Expert Injection
+// ─────────────────────────────────────────────────────────────────
+// Builds a priming sentence that makes Claude adopt the role of a
+// top-tier domain expert based on the nugget's subject. Injected
+// into system prompts across all content-generating pipelines.
+// ─────────────────────────────────────────────────────────────────
+
+/**
+ * Build expert priming text from a nugget's subject string.
+ * Returns an empty string if subject is falsy.
+ */
+export function buildExpertPriming(subject?: string): string {
+  if (!subject) return '';
+  return `You are a domain expert on the following subject: ${subject}. Use accurate terminology and professional judgment to organize and present the source material. Do NOT add facts, claims, data, or context from your own knowledge — work exclusively with what the source documents provide.`;
+}
 
 // ─────────────────────────────────────────────────────────────────
 // Prompt Utilities for gemini-3-pro-image-preview
@@ -17,10 +35,7 @@ import { StylingOptions } from '../../types';
 // is applied only when assembling the image-model prompt.
 // ─────────────────────────────────────────────────────────────────
 
-export function transformContentToTags(
-  synthesisContent: string,
-  headingText: string
-): string {
+export function transformContentToTags(synthesisContent: string, cardTitle: string): string {
   let content = synthesisContent;
 
   // Strip horizontal rules
@@ -33,8 +48,8 @@ export function transformContentToTags(
   content = content.replace(/^###\s+(.+)$/gm, '[SUBSECTION] $1');
   // ## Heading → [SECTION] Heading
   content = content.replace(/^##\s+(.+)$/gm, '[SECTION] $1');
-  // # Title → [TITLE] Title (should not appear per synthesis rules, but handle defensively)
-  content = content.replace(/^#\s+(.+)$/gm, '[TITLE] $1');
+  // # Title → strip entirely (the wrapper adds [TITLE] from cardTitle, so inline H1s are duplicates)
+  content = content.replace(/^#\s+.+$/gm, '');
 
   // Strip bold markers
   content = content.replace(/\*\*(.+?)\*\*/g, '$1');
@@ -52,7 +67,7 @@ export function transformContentToTags(
   content = content.trim();
 
   // Wrap with title and delimiters
-  return `[BEGIN TEXT CONTENT]\n[TITLE] ${headingText}\n\n${content}\n[END TEXT CONTENT]`;
+  return `[BEGIN TEXT CONTENT]\n[TITLE] ${cardTitle}\n\n${content}\n[END TEXT CONTENT]`;
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -66,16 +81,50 @@ export function transformContentToTags(
 
 // Known font families that should never appear in planner output
 const FONT_NAMES = [
-  'Montserrat', 'Inter', 'Roboto', 'Open Sans', 'Lato', 'Poppins',
-  'Raleway', 'Nunito', 'Source Sans', 'Work Sans', 'DM Sans',
-  'Playfair Display', 'Merriweather', 'Lora', 'Georgia', 'Garamond',
-  'PT Serif', 'Libre Baskerville', 'Source Serif', 'Crimson Text',
-  'Source Code Pro', 'Fira Code', 'JetBrains Mono', 'IBM Plex Mono',
-  'Helvetica', 'Arial', 'Verdana', 'Tahoma', 'Trebuchet',
+  'Montserrat',
+  'Inter',
+  'Roboto',
+  'Open Sans',
+  'Lato',
+  'Poppins',
+  'Raleway',
+  'Nunito',
+  'Source Sans',
+  'Work Sans',
+  'DM Sans',
+  'Playfair Display',
+  'Merriweather',
+  'Lora',
+  'Georgia',
+  'Garamond',
+  'PT Serif',
+  'Libre Baskerville',
+  'Source Serif',
+  'Crimson Text',
+  'Source Code Pro',
+  'Fira Code',
+  'JetBrains Mono',
+  'IBM Plex Mono',
+  'IBM Plex Sans',
+  'Helvetica',
+  'Arial',
+  'Verdana',
+  'Tahoma',
+  'Trebuchet',
   // Additional fonts from STYLE_FONTS
-  'Bebas Neue', 'Orbitron', 'Rajdhani', 'Oswald', 'Impact',
-  'Arial Black', 'DIN Condensed', 'Pacifico', 'Comic Sans MS',
-  'Rubik', 'Quicksand', 'Futura', 'Courier New',
+  'Bebas Neue',
+  'Orbitron',
+  'Rajdhani',
+  'Oswald',
+  'Impact',
+  'Arial Black',
+  'DIN Condensed',
+  'Pacifico',
+  'Comic Sans MS',
+  'Rubik',
+  'Quicksand',
+  'Futura',
+  'Courier New',
 ];
 
 export function sanitizePlannerOutput(plannerText: string): string {
@@ -106,8 +155,8 @@ export function sanitizePlannerOutput(plannerText: string): string {
   // Remove lines that are purely font specifications
   // Pattern: "Title: FontName Bold, 42pt, ..."
   text = text.replace(
-    /^.*?:\s*(?:(?:Montserrat|Inter|Roboto|Open Sans|Lato|Poppins|Raleway|Nunito|Helvetica|Arial|Bebas Neue|Orbitron|Rajdhani|Oswald|Impact|DIN Condensed|Pacifico|Comic Sans MS|Rubik|Quicksand|Futura|Courier New)\s+(?:Bold|SemiBold|Regular|Medium|Light|Thin|ExtraBold|Black)\s*,?\s*\d+(?:-\d+)?pt).*$/gim,
-    ''
+    /^.*?:\s*(?:(?:Montserrat|Inter|Roboto|Open Sans|Lato|Poppins|Raleway|Nunito|Helvetica|Arial|Bebas Neue|Orbitron|Rajdhani|Oswald|Impact|DIN Condensed|Pacifico|Comic Sans MS|Rubik|Quicksand|Futura|Courier New|IBM Plex Sans|IBM Plex Mono)\s+(?:Bold|SemiBold|Regular|Medium|Light|Thin|ExtraBold|Black)\s*,?\s*\d+(?:-\d+)?pt).*$/gim,
+    '',
   );
 
   // Remove standalone point size specs (e.g., "36pt", "22-28pt", "36-48pt")
@@ -123,7 +172,7 @@ export function sanitizePlannerOutput(plannerText: string): string {
     const escaped = font.replace(/\s+/g, '\\s+');
     text = text.replace(
       new RegExp(`\\b${escaped}\\b\\s*(?:Bold|SemiBold|Regular|Medium|Light|Thin|ExtraBold|Black)?`, 'gi'),
-      ''
+      '',
     );
   }
 
@@ -165,126 +214,137 @@ export function hexToColorName(hex: string): string {
   // Direct lookup for common palette colors
   const knownColors: Record<string, string> = {
     // ── Whites, Creams & Off-Whites ──
-    'FFFFFF': 'white',
-    'FAFAFA': 'off-white',
-    'F5F7FA': 'cool off-white',
-    'F5F5F5': 'soft light gray',
-    'F4ECD8': 'warm cream',
-    'FAF3E8': 'warm off-white',
-    'FFF8F0': 'warm off-white',
-    'FAF0E6': 'warm linen',
-    'F0F0F0': 'pale gray',
-    'F0F0F5': 'pale lavender-gray',
+    FFFFFF: 'white',
+    FAFAFA: 'off-white',
+    F5F7FA: 'light grey',
+    F5F5F5: 'soft light gray',
+    F4ECD8: 'warm cream',
+    FAF3E8: 'warm ivory',
+    FFF8F0: 'warm white',
+    FAF0E6: 'linen cream',
+    F0F0F0: 'pale gray',
+    F4F7F9: 'cool white',
+    F0F0F5: 'pale lavender',
 
     // ── Grays ──
-    'E0E0E0': 'light gray',
-    'EEEEEE': 'light gray',
-    'D0D0D0': 'silver gray',
-    'CCCCCC': 'medium gray',
-    'C0C0C0': 'silver',
-    'A0A0A0': 'warm gray',
+    E0E0E0: 'light gray',
+    EEEEEE: 'light gray',
+    D0D0D0: 'silver gray',
+    CCCCCC: 'medium gray',
+    C0C0C0: 'silver',
+    A0A0A0: 'warm gray',
     '999999': 'neutral gray',
-    '888888': 'medium gray',
+    '888888': 'mid grey',
     '808080': 'mid gray',
-    '6B7B8D': 'slate gray',
+    '6B7B8D': 'slate grey',
     '666666': 'dark gray',
-    '555555': 'medium dark gray',
-    '4A4A4A': 'charcoal gray',
+    '555555': 'mid grey',
+    '4A4A4A': 'medium grey',
     '333333': 'dark charcoal',
-    '2D3436': 'dark charcoal',
+    '2D3436': 'dark grey',
     '2D2D2D': 'near-black',
-    '222222': 'near-black',
-    '1A1A1A': 'near-black',
-    '1A1A2E': 'dark navy-black',
+    '222222': 'dark grey',
+    '1A1A1A': 'near black',
+    '1A1A2E': 'dark navy',
     '111111': 'near-black',
-    '0D0D0D': 'near-black',
+    '0D0D0D': 'near black',
     '000000': 'black',
 
     // ── Blues ──
-    '1877F2': 'bright blue',
+    '1877F2': 'facebook blue',
     '1A365D': 'deep navy',
-    '1D3557': 'deep navy',
+    '1D3557': 'navy blue',
     '1E3A5F': 'deep navy',
     '14213D': 'dark navy',
-    '2C3E50': 'dark blue-gray',
+    '2C3E50': 'dark slate',
     '2C5282': 'slate blue',
     '2B6CB0': 'medium blue',
-    '2D5BFF': 'vivid blue',
+    '2D5BFF': 'bright blue',
     '2D8CFF': 'bright blue',
     '3182CE': 'ocean blue',
-    '3D405B': 'dark slate blue',
+    '3D405B': 'muted navy',
     '4299E1': 'sky blue',
-    '4A90D9': 'medium sky blue',
+    '4A90D9': 'medium blue',
     '63B3ED': 'light blue',
-    '7FB3D8': 'soft sky blue',
+    '7FB3D8': 'soft blue',
     '87CEEB': 'sky blue',
-    '0B3D91': 'deep blueprint blue',
+    '0B3D91': 'deep blue',
     '0066CC': 'royal blue',
     '003366': 'dark navy',
     '0047AB': 'cobalt blue',
     '0077B6': 'cerulean blue',
+    '0066FF': 'bold blue',
     '00B4D8': 'cyan blue',
 
+    // ── Data-Centric Minimalist palette ──
+    '28435A': 'deep teal',
+    '5F9EA0': 'muted teal',
+    '9BC4CB': 'soft cyan',
+    '212529': 'charcoal',
+
     // ── Reds ──
-    'E63946': 'vivid red',
-    'E53E3E': 'bright red',
-    'C53030': 'deep red',
-    'FC8181': 'salmon',
-    'FF0000': 'red',
-    'FF6F61': 'coral red',
-    'CC0000': 'crimson',
-    'B91C1C': 'dark red',
-    'DC2626': 'bold red',
-    'EF4444': 'bright red',
+    FF0040: 'hot pink',
+    E63946: 'crimson red',
+    E53E3E: 'bright red',
+    C53030: 'deep red',
+    FC8181: 'salmon',
+    FF0000: 'red',
+    FF6F61: 'coral',
+    CC0000: 'crimson',
+    B91C1C: 'dark red',
+    DC2626: 'bold red',
+    EF4444: 'bright red',
 
     // ── Greens ──
     '38A169': 'emerald green',
-    '39FF14': 'neon green',
+    '39FF14': 'green neon',
     '2F855A': 'forest green',
     '48BB78': 'fresh green',
     '50C878': 'emerald green',
-    '5B8C5A': 'sage green',
+    '5B8C5A': 'olive green',
     '68D391': 'light green',
     '81B29A': 'sage green',
-    'A8D5A2': 'soft sage green',
+    A8D5A2: 'soft green',
     '276749': 'deep green',
     '059669': 'teal green',
     '10B981': 'bright emerald',
     '22C55E': 'vivid green',
 
     // ── Oranges & Yellows ──
-    'C75B12': 'burnt orange',
-    'D4A03C': 'antique gold',
-    'DD6B20': 'warm orange',
-    'E07A5F': 'terracotta orange',
-    'ED8936': 'bright orange',
-    'F2CC8F': 'warm sand',
-    'F4845F': 'warm coral',
-    'F6AD55': 'golden orange',
-    'FF6B35': 'vivid orange',
-    'FFDE00': 'bright yellow',
-    'FFD700': 'gold',
-    'FFC947': 'bright golden yellow',
-    'ECC94B': 'golden yellow',
-    'F59E0B': 'amber',
-    'F97316': 'vivid orange',
-    'FBBF24': 'bright gold',
+    D04A02: 'burnt orange',
+    EB8C00: 'tangerine',
+    C75B12: 'rustic orange',
+    D4A03C: 'mustard gold',
+    DD6B20: 'warm orange',
+    E07A5F: 'terra cotta',
+    ED8936: 'bright orange',
+    F2CC8F: 'sandy peach',
+    F4845F: 'peach orange',
+    F6AD55: 'golden orange',
+    FF6B35: 'vivid orange',
+    FFDE00: 'bright yellow',
+    FFD700: 'gold',
+    FFC947: 'warm yellow',
+    ECC94B: 'golden yellow',
+    F59E0B: 'amber',
+    F97316: 'vivid orange',
+    FBBF24: 'bright gold',
     '3B2F2F': 'dark brown',
 
     // ── Purples ──
-    '6C5CE7': 'electric purple',
+    '6C5CE7': 'purple',
     '805AD5': 'vibrant purple',
     '6B46C1': 'deep purple',
     '9F7AEA': 'lavender purple',
-    'B794F4': 'light purple',
-    'BF00FF': 'vivid magenta-purple',
+    B794F4: 'light purple',
+    BF00FF: 'purple neon',
     '553C9A': 'dark violet',
     '7C3AED': 'electric violet',
     '8B5CF6': 'bright purple',
 
     // ── Teals & Cyans ──
-    '00CEC9': 'bright teal',
-    '00F0FF': 'electric cyan',
+    '00CEC9': 'turquoise',
+    '00F0FF': 'cyan neon',
     '319795': 'teal',
     '2C7A7B': 'deep teal',
     '38B2AC': 'bright teal',
@@ -293,13 +353,13 @@ export function hexToColorName(hex: string): string {
     '14B8A6': 'vivid teal',
 
     // ── Pinks ──
-    'D4A0C0': 'dusty rose',
-    'D53F8C': 'magenta pink',
-    'ED64A6': 'bright pink',
-    'F687B3': 'soft pink',
-    'FBB6CE': 'light pink',
-    'FD79A8': 'hot pink',
-    'EC4899': 'hot pink',
+    D4A0C0: 'dusty rose',
+    D53F8C: 'magenta pink',
+    ED64A6: 'bright pink',
+    F687B3: 'soft pink',
+    FBB6CE: 'light pink',
+    FD79A8: 'soft pink',
+    EC4899: 'hot pink',
   };
 
   if (knownColors[normalizedHex]) {
@@ -342,49 +402,49 @@ export function fontToDescriptor(fontName: string): string {
   // Known font → descriptor mappings
   const fontDescriptors: Record<string, string> = {
     // Geometric sans-serifs
-    'montserrat': 'clean, geometric sans-serif',
-    'poppins': 'rounded, geometric sans-serif',
-    'futura': 'sharp, geometric sans-serif',
-    'raleway': 'thin, elegant sans-serif',
+    montserrat: 'clean, geometric sans-serif',
+    poppins: 'rounded, geometric sans-serif',
+    futura: 'sharp, geometric sans-serif',
+    raleway: 'thin, elegant sans-serif',
     'dm sans': 'compact, geometric sans-serif',
-    'nunito': 'rounded, friendly sans-serif',
-    'quicksand': 'rounded, modern sans-serif',
+    nunito: 'rounded, friendly sans-serif',
+    quicksand: 'rounded, modern sans-serif',
 
     // Condensed / display sans-serifs
     'bebas neue': 'tall, condensed, all-caps sans-serif',
-    'oswald': 'condensed, strong, industrial sans-serif',
-    'impact': 'heavy, ultra-condensed, bold sans-serif',
+    oswald: 'condensed, strong, industrial sans-serif',
+    impact: 'heavy, ultra-condensed, bold sans-serif',
     'arial black': 'heavy, wide, bold sans-serif',
     'din condensed': 'technical, narrow, industrial sans-serif',
 
     // Futuristic / technical sans-serifs
-    'orbitron': 'futuristic, geometric, squared sans-serif',
-    'rajdhani': 'angular, condensed, technical sans-serif',
+    orbitron: 'futuristic, geometric, squared sans-serif',
+    rajdhani: 'angular, condensed, technical sans-serif',
 
     // Humanist / grotesque sans-serifs
-    'inter': 'modern, neutral sans-serif',
-    'roboto': 'contemporary, versatile sans-serif',
+    inter: 'modern, neutral sans-serif',
+    roboto: 'contemporary, versatile sans-serif',
     'open sans': 'friendly, neutral sans-serif',
-    'lato': 'warm, humanist sans-serif',
+    lato: 'warm, humanist sans-serif',
     'source sans': 'technical, clean sans-serif',
     'source sans pro': 'technical, clean sans-serif',
     'work sans': 'minimal, clean sans-serif',
-    'rubik': 'rounded, geometric, friendly sans-serif',
+    rubik: 'rounded, geometric, friendly sans-serif',
     'noto sans': 'versatile, neutral sans-serif',
-    'helvetica': 'classic, neutral sans-serif',
-    'arial': 'neutral, clean sans-serif',
-    'verdana': 'wide, readable sans-serif',
+    helvetica: 'classic, neutral sans-serif',
+    arial: 'neutral, clean sans-serif',
+    verdana: 'wide, readable sans-serif',
 
     // Script / handwritten
-    'pacifico': 'flowing, casual, handwritten script',
+    pacifico: 'flowing, casual, handwritten script',
     'comic sans ms': 'casual, rounded, handwritten sans-serif',
 
     // Serifs
     'playfair display': 'elegant, high-contrast serif',
-    'merriweather': 'sturdy, readable serif',
-    'lora': 'calligraphic, balanced serif',
-    'georgia': 'classic, rounded serif',
-    'garamond': 'refined, old-style serif',
+    merriweather: 'sturdy, readable serif',
+    lora: 'calligraphic, balanced serif',
+    georgia: 'classic, rounded serif',
+    garamond: 'refined, old-style serif',
     'pt serif': 'traditional, professional serif',
     'libre baskerville': 'classic, transitional serif',
     'source serif': 'sturdy, slab-influenced serif',
@@ -398,7 +458,8 @@ export function fontToDescriptor(fontName: string): string {
     'fira code': 'modern, ligature-rich monospace',
     'jetbrains mono': 'sharp, developer monospace',
     'ibm plex mono': 'structured, technical monospace',
-    'courier': 'classic typewriter monospace',
+    'ibm plex sans': 'engineered, technical sans-serif',
+    courier: 'classic typewriter monospace',
     'courier new': 'classic typewriter monospace',
   };
 
@@ -449,19 +510,21 @@ export function fontToDescriptor(fontName: string): string {
  * the lowercased style names from VISUAL_STYLES in ai.ts.
  */
 const STYLE_COLOR_FAMILIES: Record<string, string[]> = {
-  'flat design':           ['blue', 'gray', 'slate', 'orange'],
-  'isometric':             ['blue', 'green', 'coral', 'red'],
-  'line art':              ['black', 'gray', 'red'],
-  'retro / mid-century':   ['orange', 'green', 'gold', 'cream', 'brown'],
-  'risograph / duotone':   ['red', 'navy', 'cream'],
-  'neon / dark mode':      ['cyan', 'purple', 'green', 'neon', 'black'],
-  'paper cutout':          ['orange', 'green', 'sand', 'cream', 'terracotta'],
-  'pop art':               ['red', 'blue', 'yellow', 'black'],
-  'watercolour':           ['blue', 'pink', 'green', 'rose'],
-  'blueprint':             ['blue', 'navy', 'gold'],
-  'doodle art':            ['black', 'gray', 'orange'],
-  'geometric gradient':    ['purple', 'teal', 'pink'],
-  'corporate memphis':     ['blue', 'orange', 'coral', 'yellow', 'navy'],
+  'flat design': ['blue', 'gray', 'slate', 'orange'],
+  'data-centric minimalist': ['navy', 'teal', 'blue', 'gray'],
+  isometric: ['blue', 'green', 'coral', 'red'],
+  'line art': ['black', 'gray', 'red'],
+  'retro / mid-century': ['orange', 'green', 'gold', 'cream', 'brown'],
+  'risograph / duotone': ['red', 'navy', 'cream'],
+  'neon / dark mode': ['cyan', 'purple', 'green', 'neon', 'black'],
+  'paper cutout': ['orange', 'green', 'sand', 'cream', 'terracotta'],
+  'pop art': ['red', 'blue', 'yellow', 'black'],
+  watercolour: ['blue', 'pink', 'green', 'rose'],
+  blueprint: ['blue', 'navy', 'gold'],
+  'doodle art': ['black', 'gray', 'orange'],
+  'geometric gradient': ['purple', 'teal', 'pink'],
+  'corporate memphis': ['blue', 'orange', 'coral', 'yellow', 'navy'],
+  'pwc corporate': ['orange', 'black', 'charcoal', 'tangerine'],
 };
 
 function detectPaletteStyleConflict(style: string, palette: StylingOptions['palette']): boolean {
@@ -478,7 +541,7 @@ function detectPaletteStyleConflict(style: string, palette: StylingOptions['pale
     hexToColorName(palette.primary),
     hexToColorName(palette.secondary),
     hexToColorName(palette.accent),
-  ].map(name => name.toLowerCase());
+  ].map((name) => name.toLowerCase());
 
   // If at least one palette color matches the style's expected family, no conflict
   for (const colorName of paletteColorNames) {
@@ -500,10 +563,14 @@ function detectPaletteStyleConflict(style: string, palette: StylingOptions['pale
  */
 export function buildNarrativeStyleBlock(settings: StylingOptions): string {
   // ── Style Identity (creative driver) ──
-  const styleParagraph =
-    `Design this infographic in a bold ${settings.style} aesthetic. Let the ${settings.style} style ` +
-    `drive every visual decision — shapes, decorations, title treatments, section dividers, ` +
-    `background textures, and iconography should all feel authentically ${settings.style}.`;
+  const identity = STYLE_IDENTITIES[settings.style] || '';
+  const styleParagraph = identity
+    ? `Design this infographic in a ${settings.style} aesthetic. ${identity} ` +
+      `Let this style drive every visual decision — shapes, decorations, title treatments, ` +
+      `section dividers, background textures, and iconography.`
+    : `Design this infographic in a bold ${settings.style} aesthetic. Let the ${settings.style} style ` +
+      `drive every visual decision — shapes, decorations, title treatments, section dividers, ` +
+      `background textures, and iconography should all feel authentically ${settings.style}.`;
 
   // ── Color Palette ──
   const bgName = hexToColorName(settings.palette.background);
@@ -513,9 +580,7 @@ export function buildNarrativeStyleBlock(settings: StylingOptions): string {
   const textName = hexToColorName(settings.palette.text);
 
   const hasConflict = detectPaletteStyleConflict(settings.style, settings.palette);
-  const overrideClause = hasConflict
-    ? ` Use this custom palette instead of the typical ${settings.style} colors.`
-    : '';
+  const overrideClause = hasConflict ? ` Use this custom palette instead of the typical ${settings.style} colors.` : '';
 
   const paletteParagraph =
     `Color palette: ${bgName} (${settings.palette.background}) background, ` +
@@ -550,33 +615,48 @@ export function buildNarrativeStyleBlock(settings: StylingOptions): string {
 // ─────────────────────────────────────────────────────────────────
 
 export function assembleRendererPrompt(
-  headingText: string,
+  cardTitle: string,
   synthesisContent: string,
   settings: StylingOptions,
   plannerOutput?: string,
-  referenceNote?: string
+  referenceNote?: string,
+  subject?: string,
 ): string {
   // 1. Role — open-ended, lets style drive the aesthetic
-  const role = 'You are an expert Information Designer. Create a visually striking infographic.';
+  const domainClause = subject
+    ? ` The content belongs to the domain of "${subject}" — use domain-appropriate visual metaphors, iconography, and diagram conventions.`
+    : '';
+  const role = `You are an expert Information Designer. Create a visually striking infographic.${domainClause}`;
 
   // 2. Style & Palette (narrative prose from settings — style leads)
   const styleBlock = buildNarrativeStyleBlock(settings);
 
-  // 3. Layout
+  // 3. Layout — planner output sandwiched with style enforcement
   let layoutBlock: string;
   if (plannerOutput) {
     const cleanPlan = sanitizePlannerOutput(plannerOutput);
     layoutBlock =
+      `Use the following creative brief to guide the information architecture and visual concept. ` +
+      `Interpret it strictly within the ${settings.style} style described above — the style identity ` +
+      `is non-negotiable and takes precedence over any visual interpretation of the brief.\n\n` +
       `${cleanPlan}\n\n` +
-      `Render all the provided text into this layout. All text must be legible with high contrast.`;
+      `Every single piece of text content provided below must appear in the final image — ` +
+      `no heading, bullet point, statistic, or detail may be omitted. If the layout concept ` +
+      `cannot fit all the content, adapt the layout rather than dropping text. Reduce whitespace, ` +
+      `add rows, extend sections, or use a denser arrangement — but never cut content. ` +
+      `All text must be legible with high contrast.`;
   } else {
     layoutBlock =
       `Choose the spatial arrangement that best fits the content hierarchy — ` +
-      `grids, flowing sections, or radial layouts as appropriate. All text must be legible with high contrast.`;
+      `grids, flowing sections, or radial layouts as appropriate. ` +
+      `Every single piece of text content provided below must appear in the final image — ` +
+      `no heading, bullet point, statistic, or detail may be omitted. If the layout ` +
+      `cannot fit all the content, adapt it rather than dropping text. ` +
+      `All text must be legible with high contrast.`;
   }
 
   // 4. Content (transformed from markdown to bracketed tags)
-  const contentBlock = transformContentToTags(synthesisContent, headingText);
+  const contentBlock = transformContentToTags(synthesisContent, cardTitle);
 
   // Assemble: role → style → [reference] → layout → content
   const blocks = [role, styleBlock];

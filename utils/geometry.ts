@@ -40,11 +40,7 @@ export function simplifyPath(points: NormalizedPoint[], epsilon: number = 0.003)
 /**
  * Calculate perpendicular distance from a point to a line segment.
  */
-function perpendicularDistance(
-  point: NormalizedPoint,
-  lineStart: NormalizedPoint,
-  lineEnd: NormalizedPoint
-): number {
+function perpendicularDistance(point: NormalizedPoint, lineStart: NormalizedPoint, lineEnd: NormalizedPoint): number {
   const dx = lineEnd.x - lineStart.x;
   const dy = lineEnd.y - lineStart.y;
   const lenSq = dx * dx + dy * dy;
@@ -73,8 +69,10 @@ export function getBoundingBox(points: NormalizedPoint[]): {
     return { topLeft: { x: 0, y: 0 }, bottomRight: { x: 0, y: 0 } };
   }
 
-  let minX = Infinity, minY = Infinity;
-  let maxX = -Infinity, maxY = -Infinity;
+  let minX = Infinity,
+    minY = Infinity;
+  let maxX = -Infinity,
+    maxY = -Infinity;
 
   for (const p of points) {
     if (p.x < minX) minX = p.x;
@@ -109,10 +107,6 @@ export function distanceToPolyline(point: NormalizedPoint, polyline: NormalizedP
 /**
  * Distance from a point to a line segment (used for arrow hit testing).
  */
-export function distanceToSegment(
-  point: NormalizedPoint,
-  segStart: NormalizedPoint,
-  segEnd: NormalizedPoint
-): number {
+export function distanceToSegment(point: NormalizedPoint, segStart: NormalizedPoint, segEnd: NormalizedPoint): number {
   return perpendicularDistance(point, segStart, segEnd);
 }

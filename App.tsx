@@ -1,59 +1,100 @@
-
 import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import ZoomOverlay from './components/ZoomOverlay';
-import AssetLab from './components/AssetLab';
-import { Heading, StylingOptions, DetailLevel, ZoomState, ReferenceImage, ChatMessage, UploadedFile, Nugget, Project } from './types';
-import { DEFAULT_STYLING, detectSettingsMismatch } from './utils/ai';
-import FileSidebar from './components/FileSidebar';
+import AssetsPanel from './components/AssetsPanel';
+import {
+  StylingOptions,
+  ReferenceImage,
+  Nugget,
+} from './types';
+import {
+  DEFAULT_STYLING,
+  registerCustomStyles,
+  uploadToFilesAPI,
+  deleteFromFilesAPI,
+} from './utils/ai';
+import ProjectsPanel from './components/ProjectsPanel';
 import { LandingPage } from './components/LandingPage';
-import InsightsLabPanel, { InsightsLabPanelHandle } from './components/InsightsLabPanel';
-import InsightsHeadingList from './components/InsightsHeadingList';
+import SourcesPanel from './components/SourcesPanel';
+import ChatPanel from './components/ChatPanel';
+import AutoDeckPanel from './components/AutoDeckPanel';
+import CardsPanel, { PanelEditorHandle } from './components/CardsPanel';
+import ErrorBoundary from './components/ErrorBoundary';
 
+import { UnsavedChangesDialog } from './components/Dialogs';
 import { NuggetCreationModal } from './components/NuggetCreationModal';
-import DocumentEditorModal from './components/DocumentEditorModal';
+import { ProjectCreationModal } from './components/ProjectCreationModal';
 import { useAppContext } from './context/AppContext';
+import { useNuggetContext } from './context/NuggetContext';
+import { useProjectContext } from './context/ProjectContext';
+import { useSelectionContext } from './context/SelectionContext';
+import { useStyleContext } from './context/StyleContext';
+import { useThemeContext } from './context/ThemeContext';
 import { useCardGeneration } from './hooks/useCardGeneration';
+import { useCardOperations } from './hooks/useCardOperations';
+import { useImageOperations } from './hooks/useImageOperations';
+import { useProjectOperations } from './hooks/useProjectOperations';
+import { useDocumentOperations } from './hooks/useDocumentOperations';
 import { useInsightsLab } from './hooks/useInsightsLab';
-import { callClaude } from './utils/ai';
-import { buildContentPrompt } from './utils/prompts/contentGeneration';
-import { createPlaceholderDocument, processFileToDocument } from './utils/fileProcessing';
-import { getUniqueName } from './utils/naming';
+import { useAutoDeck } from './hooks/useAutoDeck';
+import { useTokenUsage, formatTokens, formatCost, TokenUsageTotals } from './hooks/useTokenUsage';
+import { storage } from './components/StorageProvider';
+import {
+  extractHeadingsWithGemini,
+  base64ToBlob,
+} from './utils/fileProcessing';
+import { flattenBookmarks, headingsToBookmarks } from './utils/pdfBookmarks';
+import { useToast } from './components/ToastNotification';
+import PdfUploadChoiceDialog from './components/PdfUploadChoiceDialog';
+import PanelRequirements from './components/PanelRequirements';
+import StyleStudioModal from './components/StyleStudioModal';
+import { SubjectEditModal } from './components/SubjectEditModal';
 
 const App: React.FC = () => {
+  // ── Focused context hooks ──
   const {
-    isFileSidebarOpen, setIsFileSidebarOpen,
-    activeHeadingId, setActiveHeadingId,
-    activeHeading,
-    insightsSession, setInsightsSession,
-    nuggets,
-    selectedNuggetId, setSelectedNuggetId,
-    selectedNugget,
-    addNugget, deleteNugget, updateNugget,
-    updateNuggetHeading,
-    addNuggetDocument, updateNuggetDocument, removeNuggetDocument, renameNuggetDocument, toggleNuggetDocument,
-    projects, setProjects, addProject, deleteProject, updateProject, addNuggetToProject, removeNuggetFromProject,
-  } = useAppContext();
+    nuggets, selectedNuggetId, selectedNugget,
+    selectedDocumentId, setSelectedDocumentId,
+    deleteNugget, updateNugget,
+    updateNuggetDocument, removeNuggetDocument, renameNuggetDocument, toggleNuggetDocument,
+  } = useNuggetContext();
+  const { projects, deleteProject, updateProject } = useProjectContext();
+  const { activeCardId, setActiveCardId, activeCard, selectedProjectId, selectionLevel, selectEntity } = useSelectionContext();
+  const { customStyles, addCustomStyle: _addCustomStyle, updateCustomStyle: _updateCustomStyle, deleteCustomStyle: _deleteCustomStyle, replaceCustomStyles } = useStyleContext();
+  const { darkMode, toggleDarkMode } = useThemeContext();
+  const { initialTokenUsageTotals, isProjectsPanelOpen, setIsProjectsPanelOpen } = useAppContext();
 
-  const [menuDraftOptions, setMenuDraftOptions] = useState<StylingOptions>(DEFAULT_STYLING);
-  const [zoomState, setZoomState] = useState<ZoomState>({ imageUrl: null, headingId: null, headingText: null });
+  // ── Token / cost tracking (persisted to IndexedDB) ──
+  const {
+    totals: usageTotals,
+    recordUsage,
+    resetUsage,
+  } = useTokenUsage(storage, initialTokenUsageTotals as unknown as TokenUsageTotals | undefined);
 
-  // ── Reference image style anchoring ──
+  const { addToast } = useToast();
+
+  const [menuDraftOptions, setMenuDraftOptions] = useState<StylingOptions>(
+    () => selectedNugget?.stylingOptions || DEFAULT_STYLING,
+  );
+  const skipStylingWritebackRef = useRef(false);
+
+  // ── Reference image style anchoring (shared between useCardGeneration and useImageOperations) ──
   const [referenceImage, setReferenceImage] = useState<ReferenceImage | null>(null);
   const [useReferenceImage, setUseReferenceImage] = useState(false);
-  const [mismatchDialog, setMismatchDialog] = useState<{
-    resolve: (decision: 'disable' | 'skip' | 'cancel') => void;
-  } | null>(null);
 
   const {
     genStatus,
-    activeLogicTab, setActiveLogicTab,
-    manifestHeadings, setManifestHeadings,
-    currentSynthesisContent, contentDirty, selectedCount,
-    generateCardForHeading,
-    handleGenerateAll,
+    activeLogicTab,
+    setActiveLogicTab,
+    manifestCards,
+    setManifestCards,
+    currentSynthesisContent: _currentSynthesisContent,
+    contentDirty: _contentDirty,
+    selectedCount: _selectedCount,
+    generateCard,
+    handleGenerateAll: _handleGenerateAll,
     executeBatchCardGeneration,
-    handleImageModified,
-  } = useCardGeneration(menuDraftOptions, referenceImage, useReferenceImage);
+    handleImageModified: _handleImageModified,
+  } = useCardGeneration(menuDraftOptions, referenceImage, useReferenceImage, recordUsage);
 
   // ── Insights workflow hooks ──
   const {
@@ -66,16 +107,186 @@ const App: React.FC = () => {
     hasConversation: insightsHasConversation,
     handleDocChangeContinue,
     handleDocChangeStartFresh,
-  } = useInsightsLab();
+  } = useInsightsLab(recordUsage);
 
-  // ── Nugget modal state ──
-  const [showNuggetCreation, setShowNuggetCreation] = useState(false);
-  const [nuggetCreationProjectId, setNuggetCreationProjectId] = useState<string | null>(null);
-  const [editingCardContent, setEditingCardContent] = useState<{
-    headingId: string;
-    level: DetailLevel;
-    isCustomCard?: boolean;
-  } | null>(null);
+  // ── Auto-Deck workflow hook ──
+  const {
+    session: autoDeckSession,
+    startPlanning: autoDeckStartPlanning,
+    revisePlan: autoDeckRevisePlan,
+    approvePlan: autoDeckApprovePlan,
+    abort: autoDeckAbort,
+    reset: autoDeckReset,
+    retryFromReview: autoDeckRetryFromReview,
+    toggleCardIncluded: autoDeckToggleCardIncluded,
+    setQuestionAnswer: autoDeckSetQuestionAnswer,
+    setAllRecommended: autoDeckSetAllRecommended,
+    setGeneralComment: autoDeckSetGeneralComment,
+  } = useAutoDeck(recordUsage);
+
+  // ── Card operations (selection, manipulation, creation, cross-nugget) ──
+  const {
+    toggleInsightsCardSelection,
+    toggleSelectAllInsightsCards,
+    selectInsightsCardExclusive,
+    selectInsightsCardRange,
+    deselectAllInsightsCards,
+    insightsSelectedCount,
+    reorderInsightsCards,
+    deleteInsightsCard,
+    deleteSelectedInsightsCards,
+    renameInsightsCard,
+    handleSaveCardContent,
+    handleCreateCustomCard,
+    handleSaveAsCard,
+    handleCopyMoveCard,
+    handleCreateNuggetForCard,
+  } = useCardOperations();
+
+  // ── Project & nugget operations (creation, duplication, copy/move, subject) ──
+  const {
+    showNuggetCreation,
+    setShowNuggetCreation,
+    nuggetCreationProjectId,
+    setNuggetCreationProjectId,
+    showProjectCreation,
+    setShowProjectCreation,
+    projectCreationChainToNugget,
+    setProjectCreationChainToNugget,
+    subjectEditNuggetId,
+    setSubjectEditNuggetId,
+    isRegeneratingSubject,
+    handleCreateNugget,
+    handleCreateProject,
+    handleCopyNuggetToProject,
+    handleDuplicateProject,
+    handleMoveNuggetToProject,
+    handleCreateProjectForNugget,
+    handleSaveSubject,
+    handleRegenerateSubject,
+    setSubjectGenPending,
+  } = useProjectOperations({ recordUsage });
+
+  // ── Document operations (save, TOC, copy/move, upload, content generation) ──
+  const {
+    pdfChoiceDialog,
+    pdfChoiceResolverRef,
+    setPdfChoiceDialog,
+    generatingSourceIds,
+    tocLockActive,
+    setTocLockActive,
+    handleGenerateCardContent,
+    handleSaveDocument,
+    handleSaveToc,
+    handleCopyMoveDocument,
+    handleCreateNuggetWithDoc,
+    handleUploadDocuments,
+  } = useDocumentOperations({ recordUsage, onSubjectGenPending: setSubjectGenPending });
+
+  // ── Style Studio modal state ──
+  const [showStyleStudio, setShowStyleStudio] = useState(false);
+
+  // ── Register custom styles into runtime maps on mount and after changes ──
+  useEffect(() => {
+    registerCustomStyles(customStyles);
+  }, [customStyles]);
+
+  // ── Panel accordion state (only one of Projects/Sources/Chat/Auto-Deck can be open at a time) ──
+  // null = all collapsed
+  const [expandedPanel, setExpandedPanel] = useState<'projects' | 'sources' | 'chat' | 'auto-deck' | null>(null);
+  // selectedDocumentId is now in AppContext (with guard effect for auto-selection)
+
+  // ── Unsaved-changes gating for panel/nugget switching ──
+  const cardsPanelRef = useRef<PanelEditorHandle>(null);
+  const sourcesPanelRef = useRef<PanelEditorHandle>(null);
+  const [appPendingAction, setAppPendingAction] = useState<(() => void) | null>(null);
+  const [appPendingDirtyPanel, setAppPendingDirtyPanel] = useState<'cards' | 'sources' | null>(null);
+
+  const appGatedAction = useCallback((action: () => void) => {
+    if (cardsPanelRef.current?.isDirty) {
+      setAppPendingDirtyPanel('cards');
+      setAppPendingAction(() => action);
+      return;
+    }
+    if (sourcesPanelRef.current?.isDirty) {
+      setAppPendingDirtyPanel('sources');
+      setAppPendingAction(() => action);
+      return;
+    }
+    action();
+  }, []);
+
+  // ── Breadcrumb navigation handlers ──
+  const handleBreadcrumbProjectSelect = useCallback(
+    (projectId: string) => {
+      appGatedAction(() => {
+        setReferenceImage(null);
+        setUseReferenceImage(false);
+        selectEntity({ projectId });
+      });
+      setBreadcrumbDropdown(null);
+    },
+    [appGatedAction, selectEntity],
+  );
+
+  const handleBreadcrumbNuggetSelect = useCallback(
+    (nuggetId: string) => {
+      appGatedAction(() => {
+        setReferenceImage(null);
+        setUseReferenceImage(false);
+        selectEntity({ nuggetId });
+      });
+      setBreadcrumbDropdown(null);
+    },
+    [appGatedAction, selectEntity],
+  );
+
+  const handleBreadcrumbDocSelect = useCallback(
+    (docId: string) => {
+      selectEntity({ documentId: docId });
+      appGatedAction(() => setExpandedPanel('sources'));
+      setBreadcrumbDropdown(null);
+    },
+    [appGatedAction, selectEntity],
+  );
+
+  const handleAppDialogSave = useCallback(() => {
+    const panel = appPendingDirtyPanel;
+    if (panel === 'cards') cardsPanelRef.current?.save();
+    else if (panel === 'sources') sourcesPanelRef.current?.save();
+    // After saving, re-check: is the OTHER panel dirty?
+    const otherRef = panel === 'cards' ? sourcesPanelRef : cardsPanelRef;
+    const otherLabel = panel === 'cards' ? 'sources' : 'cards';
+    if (otherRef.current?.isDirty) {
+      setAppPendingDirtyPanel(otherLabel as 'cards' | 'sources');
+      return;
+    }
+    const action = appPendingAction;
+    setAppPendingAction(null);
+    setAppPendingDirtyPanel(null);
+    action?.();
+  }, [appPendingAction, appPendingDirtyPanel]);
+
+  const handleAppDialogDiscard = useCallback(() => {
+    const panel = appPendingDirtyPanel;
+    if (panel === 'cards') cardsPanelRef.current?.discard();
+    else if (panel === 'sources') sourcesPanelRef.current?.discard();
+    const otherRef = panel === 'cards' ? sourcesPanelRef : cardsPanelRef;
+    const otherLabel = panel === 'cards' ? 'sources' : 'cards';
+    if (otherRef.current?.isDirty) {
+      setAppPendingDirtyPanel(otherLabel as 'cards' | 'sources');
+      return;
+    }
+    const action = appPendingAction;
+    setAppPendingAction(null);
+    setAppPendingDirtyPanel(null);
+    action?.();
+  }, [appPendingAction, appPendingDirtyPanel]);
+
+  const handleAppDialogCancel = useCallback(() => {
+    setAppPendingAction(null);
+    setAppPendingDirtyPanel(null);
+  }, []);
 
   // ── Nugget's owned documents (per-nugget, no shared library) ──
   const nuggetDocs = useMemo(() => {
@@ -83,1161 +294,966 @@ const App: React.FC = () => {
     return selectedNugget.documents;
   }, [selectedNugget]);
 
-  // Handle nugget creation
-  const handleCreateNugget = useCallback((nugget: Nugget) => {
-    addNugget(nugget);
-    setSelectedNuggetId(nugget.id);
-    // Add to target project if specified
-    if (nuggetCreationProjectId) {
-      addNuggetToProject(nuggetCreationProjectId, nugget.id);
-      setNuggetCreationProjectId(null);
+  // ── Breadcrumb derived data ──
+  const activeDocForBreadcrumb = useMemo(() => {
+    if (!nuggetDocs.length) return null;
+    if (selectedDocumentId) {
+      const found = nuggetDocs.find((d) => d.id === selectedDocumentId);
+      if (found) return found;
     }
-  }, [addNugget, setSelectedNuggetId, nuggetCreationProjectId, addNuggetToProject]);
+    return nuggetDocs[0];
+  }, [nuggetDocs, selectedDocumentId]);
 
-  // Handle project creation
-  const handleCreateProject = useCallback(() => {
-    const now = Date.now();
-    const existingProjectNames = projects.map(p => p.name);
-    const project: Project = {
-      id: `project-${now}-${Math.random().toString(36).substr(2, 9)}`,
-      name: getUniqueName('New Project', existingProjectNames),
-      nuggetIds: [],
-      createdAt: now,
-      lastModifiedAt: now,
-    };
-    addProject(project);
-  }, [addProject, projects]);
-
-  // Handle copying a nugget to another project (duplicate nugget)
-  const handleCopyNuggetToProject = useCallback((nuggetId: string, targetProjectId: string) => {
-    const nugget = nuggets.find(n => n.id === nuggetId);
-    if (!nugget) return;
-    const now = Date.now();
-    const newNuggetId = `nugget-${now}-${Math.random().toString(36).substr(2, 9)}`;
-    // Get existing nugget names in the target project for dedup
-    const targetProject = projects.find(p => p.id === targetProjectId);
-    const targetNuggetNames = targetProject
-      ? targetProject.nuggetIds.map(nid => nuggets.find(n => n.id === nid)?.name || '').filter(Boolean)
+  const nuggetDropdownItems = useMemo(() => {
+    const parent = selectedNugget ? projects.find((p) => p.nuggetIds.includes(selectedNugget.id)) : null;
+    const inProject = parent
+      ? parent.nuggetIds.map((nid) => nuggets.find((n) => n.id === nid)).filter((n): n is Nugget => !!n)
       : [];
-    const copiedNugget: Nugget = {
-      ...nugget,
-      id: newNuggetId,
-      name: getUniqueName(`${nugget.name} (copy)`, targetNuggetNames),
-      documents: nugget.documents.map(d => ({ ...d, id: `doc-${Math.random().toString(36).substr(2, 9)}` })),
-      headings: nugget.headings.map(h => ({ ...h, id: `heading-${Math.random().toString(36).substr(2, 9)}` })),
-      messages: [...(nugget.messages || [])],
-      createdAt: now,
-      lastModifiedAt: now,
-    };
-    addNugget(copiedNugget);
-    addNuggetToProject(targetProjectId, newNuggetId);
-  }, [nuggets, projects, addNugget, addNuggetToProject]);
+    const allProjectIds = new Set(projects.flatMap((p) => p.nuggetIds));
+    const ungrouped = nuggets.filter((n) => !allProjectIds.has(n.id));
+    return { inProject, ungrouped, parent };
+  }, [nuggets, projects, selectedNugget]);
 
-  // Handle moving a nugget to another project (re-assign)
-  const handleMoveNuggetToProject = useCallback((nuggetId: string, sourceProjectId: string, targetProjectId: string) => {
-    // Auto-rename if name collides in target project
-    const nugget = nuggets.find(n => n.id === nuggetId);
-    if (nugget) {
-      const targetProject = projects.find(p => p.id === targetProjectId);
-      const targetNuggetNames = targetProject
-        ? targetProject.nuggetIds.map(nid => nuggets.find(n => n.id === nid)?.name || '').filter(Boolean)
-        : [];
-      const uniqueName = getUniqueName(nugget.name, targetNuggetNames);
-      if (uniqueName !== nugget.name) {
-        updateNugget(nuggetId, n => ({ ...n, name: uniqueName, lastModifiedAt: Date.now() }));
-      }
-    }
-    removeNuggetFromProject(sourceProjectId, nuggetId);
-    addNuggetToProject(targetProjectId, nuggetId);
-  }, [nuggets, projects, removeNuggetFromProject, addNuggetToProject, updateNugget]);
-
-  // Handle creating a new project for a nugget (copy or move)
-  // Inlined logic to avoid stale closure issues — creates the project with the nugget already assigned
-  const handleCreateProjectForNugget = useCallback((nuggetId: string, projectName: string, mode: 'copy' | 'move', sourceProjectId: string) => {
-    const now = Date.now();
-    const newProjectId = `project-${now}-${Math.random().toString(36).substr(2, 9)}`;
-    // Auto-increment project name if it already exists
-    const uniqueProjectName = getUniqueName(projectName, projects.map(p => p.name));
-
-    if (mode === 'move') {
-      // Move: create project with the nuggetId already included, remove from source
-      const newProject: Project = {
-        id: newProjectId,
-        name: uniqueProjectName,
-        nuggetIds: [nuggetId],
-        createdAt: now,
-        lastModifiedAt: now,
-      };
-      // Single setProjects call: add new project + remove nugget from source
-      setProjects(prev => [
-        ...prev.map(p =>
-          p.id === sourceProjectId
-            ? { ...p, nuggetIds: p.nuggetIds.filter(id => id !== nuggetId), lastModifiedAt: now }
-            : p
-        ),
-        newProject,
-      ]);
-    } else {
-      // Copy: duplicate the nugget, create project with the copy's ID
-      const nugget = nuggets.find(n => n.id === nuggetId);
-      if (!nugget) return;
-      const newNuggetId = `nugget-${now}-${Math.random().toString(36).substr(2, 9)}`;
-      const copiedNugget: Nugget = {
-        ...nugget,
-        id: newNuggetId,
-        name: `${nugget.name} (copy)`,
-        documents: nugget.documents.map(d => ({ ...d, id: `doc-${Math.random().toString(36).substr(2, 9)}` })),
-        headings: nugget.headings.map(h => ({ ...h, id: `heading-${Math.random().toString(36).substr(2, 9)}` })),
-        messages: [...(nugget.messages || [])],
-        createdAt: now,
-        lastModifiedAt: now,
-      };
-      const newProject: Project = {
-        id: newProjectId,
-        name: uniqueProjectName,
-        nuggetIds: [newNuggetId],
-        createdAt: now,
-        lastModifiedAt: now,
-      };
-      addNugget(copiedNugget);
-      setProjects(prev => [...prev, newProject]);
-    }
-  }, [nuggets, projects, addNugget, setProjects]);
-
-  // Save card content as heading in insights nugget
-  const handleSaveAsHeading = useCallback((message: ChatMessage, editedContent: string) => {
-    if (!selectedNugget || selectedNugget.type !== 'insights') return;
-    const content = editedContent || message.content;
-
-    // Extract title from first # heading line, auto-increment if duplicate
-    const titleMatch = content.match(/^#\s+(.+)$/m);
-    const rawTitle = titleMatch ? titleMatch[1].trim() : 'Untitled Card';
-    const existingCardNames = selectedNugget.headings.map(h => h.text);
-    const title = getUniqueName(rawTitle, existingCardNames);
-
-    // Remove the title line from content body
-    const bodyContent = content.replace(/^#\s+.+\n*/, '').trim();
-
-    const headingId = `insight-${Math.random().toString(36).substr(2, 9)}`;
-    const level = message.detailLevel || 'Standard';
-
-    const activeDocNames = selectedNugget.documents
-      .filter(d => d.enabled !== false && d.content)
-      .map(d => d.name);
-
-    const newHeading: Heading = {
-      id: headingId,
-      text: title,
-      level: 1,
-      selected: false,
-      synthesisMap: { [level]: `# ${title}\n\n${bodyContent}` },
-      isSynthesizingMap: {},
-      settings: { ...menuDraftOptions, levelOfDetail: level },
-      createdAt: Date.now(),
-      sourceDocuments: activeDocNames,
-    };
-
-    // Add heading to nugget + mark message as saved
-    updateNugget(selectedNugget.id, n => ({
-      ...n,
-      headings: [...n.headings, newHeading],
-      messages: (n.messages || []).map(m =>
-        m.id === message.id ? { ...m, savedAsHeadingId: headingId } : m
-      ),
-      lastModifiedAt: Date.now(),
-    }));
-
-    // Propagate to old state for backward compat
-    setInsightsSession(prev => {
-      if (!prev) return prev;
-      return {
-        ...prev,
-        headings: [...prev.headings, newHeading],
-        messages: prev.messages.map(m =>
-          m.id === message.id ? { ...m, savedAsHeadingId: headingId } : m
-        ),
-      };
-    });
-
-    // Select the new heading
-    setActiveHeadingId(headingId);
-  }, [selectedNugget, updateNugget, setInsightsSession, setActiveHeadingId, menuDraftOptions]);
-
-  // Toggle selection for insights headings
-  const toggleInsightsHeadingSelection = useCallback((headingId: string) => {
-    if (!selectedNugget) return;
-    updateNugget(selectedNugget.id, n => ({
-      ...n,
-      headings: n.headings.map(h =>
-        h.id === headingId ? { ...h, selected: !h.selected } : h
-      ),
-      lastModifiedAt: Date.now(),
-    }));
-    // Propagate to old state
-    setInsightsSession(prev => {
-      if (!prev) return prev;
-      return {
-        ...prev,
-        headings: prev.headings.map(h =>
-          h.id === headingId ? { ...h, selected: !h.selected } : h
-        ),
-      };
-    });
-  }, [selectedNugget, updateNugget, setInsightsSession]);
-
-  // Select/deselect all insights headings
-  const toggleSelectAllInsightsHeadings = useCallback(() => {
-    if (!selectedNugget) return;
-    const headings = selectedNugget.headings || [];
-    const allSelected = headings.length > 0 && headings.every(h => h.selected);
-    const newSelected = !allSelected;
-    updateNugget(selectedNugget.id, n => ({
-      ...n,
-      headings: n.headings.map(h => ({ ...h, selected: newSelected })),
-      lastModifiedAt: Date.now(),
-    }));
-    setInsightsSession(prev => {
-      if (!prev) return prev;
-      return {
-        ...prev,
-        headings: prev.headings.map(h => ({ ...h, selected: newSelected })),
-      };
-    });
-  }, [selectedNugget, updateNugget, setInsightsSession]);
-
-  // Select a single heading exclusively (deselect all others)
-  const selectInsightsHeadingExclusive = useCallback((headingId: string) => {
-    if (!selectedNugget) return;
-    updateNugget(selectedNugget.id, n => ({
-      ...n,
-      headings: n.headings.map(h => ({ ...h, selected: h.id === headingId })),
-      lastModifiedAt: Date.now(),
-    }));
-    setInsightsSession(prev => {
-      if (!prev) return prev;
-      return {
-        ...prev,
-        headings: prev.headings.map(h => ({ ...h, selected: h.id === headingId })),
-      };
-    });
-  }, [selectedNugget, updateNugget, setInsightsSession]);
-
-  // Select a range of headings between two IDs (inclusive)
-  const selectInsightsHeadingRange = useCallback((fromId: string, toId: string) => {
-    if (!selectedNugget) return;
-    const headings = selectedNugget.headings || [];
-    const fromIdx = headings.findIndex(h => h.id === fromId);
-    const toIdx = headings.findIndex(h => h.id === toId);
-    if (fromIdx === -1 || toIdx === -1) return;
-    const minIdx = Math.min(fromIdx, toIdx);
-    const maxIdx = Math.max(fromIdx, toIdx);
-    updateNugget(selectedNugget.id, n => ({
-      ...n,
-      headings: n.headings.map((h, i) => ({ ...h, selected: i >= minIdx && i <= maxIdx })),
-      lastModifiedAt: Date.now(),
-    }));
-    setInsightsSession(prev => {
-      if (!prev) return prev;
-      return {
-        ...prev,
-        headings: prev.headings.map((h, i) => ({ ...h, selected: i >= minIdx && i <= maxIdx })),
-      };
-    });
-  }, [selectedNugget, updateNugget, setInsightsSession]);
-
-  // Deselect all insights headings
-  const deselectAllInsightsHeadings = useCallback(() => {
-    if (!selectedNugget) return;
-    updateNugget(selectedNugget.id, n => ({
-      ...n,
-      headings: n.headings.map(h => ({ ...h, selected: false })),
-      lastModifiedAt: Date.now(),
-    }));
-    setInsightsSession(prev => {
-      if (!prev) return prev;
-      return {
-        ...prev,
-        headings: prev.headings.map(h => ({ ...h, selected: false })),
-      };
-    });
-  }, [selectedNugget, updateNugget, setInsightsSession]);
-
-  // Delete insights heading
-  const deleteInsightsHeading = useCallback((headingId: string) => {
-    if (!selectedNugget) return;
-    updateNugget(selectedNugget.id, n => ({
-      ...n,
-      headings: n.headings.filter(h => h.id !== headingId),
-      lastModifiedAt: Date.now(),
-    }));
-    // Propagate to old state
-    setInsightsSession(prev => {
-      if (!prev) return prev;
-      return { ...prev, headings: prev.headings.filter(h => h.id !== headingId) };
-    });
-  }, [selectedNugget, updateNugget, setInsightsSession]);
-
-  // Delete selected insights headings (bulk)
-  const deleteSelectedInsightsHeadings = useCallback(() => {
-    if (!selectedNugget) return;
-    const selectedIds = new Set(selectedNugget.headings.filter(h => h.selected).map(h => h.id));
-    if (selectedIds.size === 0) return;
-    updateNugget(selectedNugget.id, n => ({
-      ...n,
-      headings: n.headings.filter(h => !selectedIds.has(h.id)),
-      lastModifiedAt: Date.now(),
-    }));
-    setInsightsSession(prev => {
-      if (!prev) return prev;
-      return { ...prev, headings: prev.headings.filter(h => !selectedIds.has(h.id)) };
-    });
-  }, [selectedNugget, updateNugget, setInsightsSession]);
-
-  // Rename insights heading
-  const renameInsightsHeading = useCallback((headingId: string, newName: string) => {
-    updateNuggetHeading(headingId, h => ({ ...h, text: newName, lastEditedAt: Date.now() }));
-  }, [updateNuggetHeading]);
-
-  // Edit insights heading content (open card editor for a specific heading)
-  const editInsightsHeading = useCallback((headingId: string) => {
-    const heading = insightsSession?.headings?.find(h => h.id === headingId);
-    if (!heading) return;
-    const level = (heading.settings || DEFAULT_STYLING).levelOfDetail;
-    setActiveHeadingId(headingId);
-    setEditingCardContent({ headingId, level });
-  }, [insightsSession]);
-
-  // Handle image modified for insights headings
-  const handleInsightsImageModified = useCallback((headingId: string, newImageUrl: string, history: any[]) => {
-    if (!selectedNugget) return;
-    const heading = selectedNugget.headings.find(h => h.id === headingId);
-    const level = (heading?.settings || DEFAULT_STYLING).levelOfDetail;
-
-    updateNugget(selectedNugget.id, n => ({
-      ...n,
-      headings: n.headings.map(h => {
-        if (h.id !== headingId) return h;
-        return {
-          ...h,
-          cardUrlMap: { ...(h.cardUrlMap || {}), [level]: newImageUrl },
-          imageHistoryMap: { ...(h.imageHistoryMap || {}), [level]: history },
-        };
-      }),
-      lastModifiedAt: Date.now(),
-    }));
-    // Propagate to old state
-    setInsightsSession(prev => {
-      if (!prev) return prev;
-      return {
-        ...prev,
-        headings: prev.headings.map(h => {
-          if (h.id !== headingId) return h;
-          return {
-            ...h,
-            cardUrlMap: { ...(h.cardUrlMap || {}), [level]: newImageUrl },
-            imageHistoryMap: { ...(h.imageHistoryMap || {}), [level]: history },
-          };
-        }),
-      };
-    });
-  }, [selectedNugget, updateNugget, setInsightsSession]);
-
-  // Insights selected count
-  const insightsSelectedCount = useMemo(() => {
-    if (selectedNugget?.type === 'insights') {
-      return selectedNugget.headings.filter(h => h.selected).length;
-    }
-    return insightsSession?.headings?.filter(h => h.selected).length || 0;
-  }, [selectedNugget, insightsSession]);
 
   const [showLanding, setShowLanding] = useState(true);
   const handleLaunch = useCallback(() => setShowLanding(false), []);
-  const [copied, setCopied] = useState(false);
+  const [_copied, _setCopied] = useState(false);
   const [emptyDragging, setEmptyDragging] = useState(false);
-  const [sidebarWidth, setSidebarWidth] = useState(230);
-  const isDraggingSidebar = useRef(false);
-  const [chatPanelPercent, setChatPanelPercent] = useState(40); // % of container width
-  const isDraggingChatPanel = useRef(false);
-  const chatPanelContainerRef = useRef<HTMLDivElement>(null);
-  const sidebarRef = useRef<HTMLDivElement>(null);
-  const insightsLabRef = useRef<InsightsLabPanelHandle>(null);
-  const [sidebarCanScroll, setSidebarCanScroll] = useState(false);
+  const [showUsageDropdown, setShowUsageDropdown] = useState(false);
+  const usageDropdownRef = useRef<HTMLDivElement>(null);
+  const [breadcrumbDropdown, setBreadcrumbDropdown] = useState<'project' | 'nugget' | 'document' | null>(null);
+  const breadcrumbRef = useRef<HTMLDivElement>(null);
 
   const committedSettings = useMemo(() => {
-    return activeHeading?.settings || DEFAULT_STYLING;
-  }, [activeHeading]);
+    return selectedNugget?.stylingOptions || DEFAULT_STYLING;
+  }, [selectedNugget?.stylingOptions]);
 
-  // Sync logic tab with current settings whenever heading changes
+  // ── Image operations (zoom, reference image, card images, downloads, generation wrappers) ──
+  const {
+    zoomState,
+    setZoomState,
+    openZoom,
+    closeZoom,
+    handleStampReference,
+    handleReferenceImageModified,
+    handleDeleteReference,
+    handleInsightsImageModified,
+    handleDeleteCardImage,
+    handleDeleteCardVersions,
+    handleDeleteAllCardImages,
+    handleDownloadImage,
+    handleDownloadAllImages,
+    wrappedGenerateCard,
+    wrappedExecuteBatch,
+    mismatchDialog,
+    setMismatchDialog,
+  } = useImageOperations({
+    activeCard,
+    activeLogicTab,
+    committedSettings,
+    menuDraftOptions,
+    referenceImage,
+    setReferenceImage,
+    useReferenceImage,
+    setUseReferenceImage,
+    generateCard,
+    executeBatchCardGeneration,
+  });
+
+  // Auto-select first card when cards exist but none is active
+  const nuggetCards = useMemo(() => selectedNugget?.cards ?? [], [selectedNugget?.cards]);
   useEffect(() => {
-    if (committedSettings.levelOfDetail) {
-      setActiveLogicTab(committedSettings.levelOfDetail);
+    if (nuggetCards.length > 0 && (!activeCardId || !nuggetCards.find((c) => c.id === activeCardId))) {
+      setActiveCardId(nuggetCards[0].id);
     }
-  }, [activeHeadingId, committedSettings.levelOfDetail]);
+  }, [nuggetCards, activeCardId, setActiveCardId]);
+
+  // Sync logic tab with card's structural detail level whenever card changes
+  useEffect(() => {
+    if (activeCard?.detailLevel) {
+      setActiveLogicTab(activeCard.detailLevel);
+    }
+  }, [activeCardId, activeCard?.detailLevel, setActiveLogicTab]);
 
   // Keep menuDraftOptions.levelOfDetail in sync with activeLogicTab
   useEffect(() => {
-    setMenuDraftOptions(prev => prev.levelOfDetail !== activeLogicTab ? { ...prev, levelOfDetail: activeLogicTab } : prev);
+    setMenuDraftOptions((prev) =>
+      prev.levelOfDetail !== activeLogicTab ? { ...prev, levelOfDetail: activeLogicTab } : prev,
+    );
   }, [activeLogicTab]);
+
+  // ── Nugget ↔ toolbar styling sync ──
+  // Read: sync toolbar FROM nugget on nugget selection change
+  useEffect(() => {
+    const nugget = nuggets.find((n) => n.id === selectedNuggetId);
+    skipStylingWritebackRef.current = true;
+    setMenuDraftOptions(nugget?.stylingOptions || DEFAULT_STYLING);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally sync only on selection change; including nuggets would re-trigger on every card generation
+  }, [selectedNuggetId]);
+
+  // Write: persist toolbar changes TO nugget (no lastModifiedAt bump — styling is a preference)
+  useEffect(() => {
+    if (skipStylingWritebackRef.current) {
+      skipStylingWritebackRef.current = false;
+      return;
+    }
+    if (!selectedNuggetId) return;
+    updateNugget(selectedNuggetId, (n) => ({
+      ...n,
+      stylingOptions: menuDraftOptions,
+    }));
+  }, [menuDraftOptions, selectedNuggetId, updateNugget]);
 
   // ── Global keyboard shortcuts ──
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        setZoomState({ imageUrl: null, headingId: null, headingText: null });
-        setManifestHeadings(null);
+        setZoomState({ imageUrl: null, cardId: null, cardText: null });
+        setManifestCards(null);
+        setExpandedPanel(null);
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => {
       window.removeEventListener('keydown', onKeyDown);
     };
-  }, []);
+  }, [setZoomState, setManifestCards, setExpandedPanel]);
 
-  // ── Sidebar resize drag ──
-  const handleSidebarDragStart = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    isDraggingSidebar.current = true;
-    document.body.style.cursor = 'col-resize';
-    document.body.style.userSelect = 'none';
-
-    const handleMouseMove = (e: MouseEvent) => {
-      if (!isDraggingSidebar.current) return;
-      const newWidth = Math.max(180, Math.min(500, e.clientX));
-      setSidebarWidth(newWidth);
-    };
-    const handleMouseUp = () => {
-      isDraggingSidebar.current = false;
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
-    };
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', handleMouseUp);
-  }, []);
-
-  const handleChatPanelDragStart = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    isDraggingChatPanel.current = true;
-    document.body.style.cursor = 'col-resize';
-    document.body.style.userSelect = 'none';
-
-    const handleMouseMove = (ev: MouseEvent) => {
-      if (!isDraggingChatPanel.current || !chatPanelContainerRef.current) return;
-      const containerRect = chatPanelContainerRef.current.getBoundingClientRect();
-      const pct = ((ev.clientX - containerRect.left) / containerRect.width) * 100;
-      setChatPanelPercent(Math.max(25, Math.min(75, pct)));
-    };
-    const handleMouseUp = () => {
-      isDraggingChatPanel.current = false;
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
-    };
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', handleMouseUp);
-  }, []);
-
-  // ── Sidebar scroll-more indicator detection ──
-  const checkSidebarScrollable = useCallback((el: HTMLElement | null) => {
-    if (!el) { setSidebarCanScroll(false); return; }
-    const hasMore = el.scrollHeight - el.scrollTop - el.clientHeight > 20;
-    setSidebarCanScroll(hasMore);
-  }, []);
-
+  // ── Click-outside to close overlay panels ──
   useEffect(() => {
-    const sidebar = sidebarRef.current;
-    const onSidebarScroll = () => checkSidebarScrollable(sidebar);
-    sidebar?.addEventListener('scroll', onSidebarScroll);
-    const ro = new ResizeObserver(() => { onSidebarScroll(); });
-    if (sidebar) ro.observe(sidebar);
-    onSidebarScroll();
-    return () => {
-      sidebar?.removeEventListener('scroll', onSidebarScroll);
-      ro.disconnect();
+    if (!expandedPanel) return;
+    const handler = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (target.closest('[data-panel-overlay]')) return;
+      if (target.closest('[data-panel-strip]')) return;
+      if (target.closest('[data-breadcrumb-dropdown]')) return;
+      // Don't close when clicking portal-rendered menus, modals, dialogs (z-index ≥ 100)
+      const fixed = target.closest('.fixed');
+      if (fixed && fixed.parentElement === document.body) return;
+      appGatedAction(() => setExpandedPanel(null));
     };
-  });
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [expandedPanel, appGatedAction]);
 
-  const openZoom = useCallback((imageUrl: string) => {
-    const settings = activeHeading?.settings || committedSettings;
-    setZoomState({
-      imageUrl,
-      headingId: activeHeading?.id || null,
-      headingText: activeHeading?.text || null,
-      palette: settings.palette || null,
-      imageHistory: activeHeading?.imageHistoryMap?.[activeLogicTab],
-      aspectRatio: settings.aspectRatio,
-      resolution: settings.resolution,
-    });
-  }, [activeHeading, committedSettings, activeLogicTab]);
-
-  const closeZoom = useCallback(() => {
-    setZoomState({ imageUrl: null, headingId: null, headingText: null });
-  }, []);
-
-  // ── Reference image stamp & mismatch ──
-  const handleStampReference = useCallback(() => {
-    const cardUrl = activeHeading?.cardUrlMap?.[activeLogicTab];
-    if (!cardUrl) return;
-    setReferenceImage({ url: cardUrl, settings: { ...menuDraftOptions } });
-    setUseReferenceImage(true);
-  }, [activeHeading, activeLogicTab, menuDraftOptions]);
-
-  const handleReferenceImageModified = useCallback((newImageUrl: string) => {
-    setReferenceImage(prev => prev ? { ...prev, url: newImageUrl } : prev);
-  }, []);
-
-  const handleDeleteReference = useCallback(() => {
-    setReferenceImage(null);
-    setUseReferenceImage(false);
-  }, []);
-
-  const showMismatchDialog = useCallback(() => {
-    return new Promise<'disable' | 'skip' | 'cancel'>((resolve) => {
-      setMismatchDialog({ resolve });
-    });
-  }, []);
-
-  const wrappedGenerateCard = useCallback(async (heading: Heading) => {
-    if (referenceImage && useReferenceImage) {
-      if (detectSettingsMismatch(menuDraftOptions, referenceImage.settings)) {
-        const decision = await showMismatchDialog();
-        if (decision === 'cancel') return;
-        if (decision === 'disable') setUseReferenceImage(false);
-        if (decision === 'disable' || decision === 'skip') {
-          await generateCardForHeading(heading, true);
-          return;
-        }
+  // Close usage dropdown on outside click
+  useEffect(() => {
+    if (!showUsageDropdown) return;
+    const handler = (e: MouseEvent) => {
+      if (usageDropdownRef.current && !usageDropdownRef.current.contains(e.target as Node)) {
+        setShowUsageDropdown(false);
       }
-    }
-    await generateCardForHeading(heading);
-  }, [referenceImage, useReferenceImage, menuDraftOptions, generateCardForHeading, showMismatchDialog]);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showUsageDropdown]);
 
-  const wrappedExecuteBatch = useCallback(async () => {
-    if (referenceImage && useReferenceImage) {
-      if (detectSettingsMismatch(menuDraftOptions, referenceImage.settings)) {
-        const decision = await showMismatchDialog();
-        if (decision === 'cancel') return;
-        if (decision === 'disable') setUseReferenceImage(false);
-      }
-    }
-    await executeBatchCardGeneration();
-  }, [referenceImage, useReferenceImage, menuDraftOptions, executeBatchCardGeneration, showMismatchDialog]);
+  // Close breadcrumb dropdown on outside click or Escape
+  useEffect(() => {
+    if (!breadcrumbDropdown) return;
+    const onClick = (e: MouseEvent) => {
+      if (breadcrumbRef.current && !breadcrumbRef.current.contains(e.target as Node)) setBreadcrumbDropdown(null);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setBreadcrumbDropdown(null);
+    };
+    document.addEventListener('mousedown', onClick);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onClick);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [breadcrumbDropdown]);
 
-  const downloadDataUrl = useCallback((dataUrl: string, filename: string) => {
-    const a = document.createElement('a');
-    a.href = dataUrl;
-    a.download = filename;
-    a.click();
-  }, []);
+  // Auto-close breadcrumb dropdown on nugget change
+  useEffect(() => {
+    setBreadcrumbDropdown(null);
+  }, [selectedNuggetId]);
 
-  const handleDownloadImage = useCallback(() => {
-    const url = activeHeading?.cardUrlMap?.[activeLogicTab];
-    if (!url) return;
-    const slug = activeHeading!.text.replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-|-$/g, '').toLowerCase().slice(0, 40);
-    downloadDataUrl(url, `${slug}-${activeLogicTab.toLowerCase()}.png`);
-  }, [activeHeading, activeLogicTab, downloadDataUrl]);
+  // ── Shared nugget list props (used by both SourcesPanel and CardsPanel) ──
+  const otherNuggetsList = useMemo(
+    () => nuggets.filter((n) => n.id !== selectedNugget?.id).map((n) => ({ id: n.id, name: n.name })),
+    [nuggets, selectedNugget?.id],
+  );
 
-  const handleDownloadAllImages = useCallback(() => {
-    if (!selectedNugget) return;
-    for (const heading of selectedNugget.headings) {
-      const url = heading.cardUrlMap?.[activeLogicTab];
-      if (!url) continue;
-      const slug = heading.text.replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-|-$/g, '').toLowerCase().slice(0, 40);
-      downloadDataUrl(url, `${slug}-${activeLogicTab.toLowerCase()}.png`);
-    }
-  }, [selectedNugget, activeLogicTab, downloadDataUrl]);
-
-  // ── Card content editing (opens universal editor) ──
-  const handleEditCardContent = useCallback(() => {
-    if (!activeHeadingId) return;
-    setEditingCardContent({
-      headingId: activeHeadingId,
-      level: activeLogicTab,
-    });
-  }, [activeHeadingId, activeLogicTab]);
+  const projectNuggetsList = useMemo(
+    () =>
+      projects.map((p) => ({
+        projectId: p.id,
+        projectName: p.name,
+        nuggets: p.nuggetIds
+          .filter((nid) => nid !== selectedNugget?.id)
+          .map((nid) => nuggets.find((n) => n.id === nid))
+          .filter((n): n is Nugget => !!n)
+          .map((n) => ({ id: n.id, name: n.name })),
+      })),
+    [projects, nuggets, selectedNugget?.id],
+  );
 
   return (
     <div className="min-h-screen bg-white">
       {showLanding ? (
         <LandingPage onLaunch={handleLaunch} />
       ) : (
-      <>
-      {/* Nugget modals */}
-      {showNuggetCreation && (
-        <NuggetCreationModal
-          nuggets={nuggets}
-          onCreateNugget={handleCreateNugget}
-          onClose={() => setShowNuggetCreation(false)}
-        />
-      )}
-      {editingCardContent && (() => {
-        const heading = insightsSession?.headings?.find(h => h.id === editingCardContent.headingId)
-          || selectedNugget?.headings?.find(h => h.id === editingCardContent.headingId);
-        if (!heading) return null;
-        const content = heading.synthesisMap?.[editingCardContent.level] || '';
-        return (
-          <DocumentEditorModal
-            document={{ id: editingCardContent.headingId, name: heading.text, content } as UploadedFile}
-            onSave={(newContent) => {
-              updateNuggetHeading(editingCardContent.headingId, h => ({
-                ...h,
-                synthesisMap: { ...(h.synthesisMap || {}), [editingCardContent.level]: newContent },
-                lastEditedAt: Date.now(),
-              }));
-            }}
-            onClose={() => setEditingCardContent(null)}
-            isCustomCard={editingCardContent.isCustomCard}
-            existingCardNames={
-              editingCardContent.isCustomCard
-                ? (insightsSession?.headings || [])
-                    .filter(h => h.id !== editingCardContent.headingId)
-                    .map(h => h.text)
-                : undefined
-            }
-            onSaveCustomCard={(name) => {
-              // Rename the heading to the user-chosen name
-              updateNuggetHeading(editingCardContent.headingId, h => ({
-                ...h,
-                text: name,
-                lastEditedAt: Date.now(),
-              }));
-            }}
-            onDiscardCustomCard={() => {
-              // Remove the freshly created heading from nugget + insightsSession
-              const hId = editingCardContent.headingId;
-              if (selectedNugget) {
-                updateNugget(selectedNugget.id, n => ({
-                  ...n,
-                  headings: n.headings.filter(h => h.id !== hId),
-                  lastModifiedAt: Date.now(),
-                }));
-              }
-              setInsightsSession(prev => prev ? { ...prev, headings: prev.headings.filter(h => h.id !== hId) } : prev);
-              if (activeHeadingId === hId) setActiveHeadingId(null);
-            }}
-          />
-        );
-      })()}
+        <>
+          {/* Nugget modals */}
+          {showNuggetCreation && (
+            <NuggetCreationModal
+              onCreateNugget={handleCreateNugget}
+              onClose={() => setShowNuggetCreation(false)}
+            />
+          )}
 
-      {/* Zoom Overlay */}
-      {zoomState.imageUrl && <ZoomOverlay zoomState={zoomState} onClose={closeZoom} />}
+          {showProjectCreation && (
+            <ProjectCreationModal
+              projects={projects}
+              onCreateProject={(name, desc) => {
+                const projectId = handleCreateProject(name, desc);
+                if (projectCreationChainToNugget) {
+                  setNuggetCreationProjectId(projectId);
+                  setShowProjectCreation(false);
+                  setShowNuggetCreation(true);
+                  setProjectCreationChainToNugget(false);
+                }
+              }}
+              onClose={() => {
+                setShowProjectCreation(false);
+                setProjectCreationChainToNugget(false);
+              }}
+            />
+          )}
 
-      <div className="flex flex-col h-screen overflow-hidden">
+          {/* PDF upload choice dialog */}
+          {pdfChoiceDialog && (
+            <PdfUploadChoiceDialog
+              fileName={pdfChoiceDialog.fileName}
+              pdfCount={pdfChoiceDialog.pdfCount}
+              onConvertToMarkdown={() => {
+                pdfChoiceResolverRef.current?.('markdown');
+                pdfChoiceResolverRef.current = null;
+                setPdfChoiceDialog(null);
+              }}
+              onKeepAsPdf={() => {
+                pdfChoiceResolverRef.current?.('native-pdf');
+                pdfChoiceResolverRef.current = null;
+                setPdfChoiceDialog(null);
+              }}
+              onCancel={() => {
+                pdfChoiceResolverRef.current?.('cancel');
+                pdfChoiceResolverRef.current = null;
+                setPdfChoiceDialog(null);
+              }}
+            />
+          )}
 
-        <div className="flex flex-1 overflow-hidden">
-          {/* File Sidebar */}
-          <FileSidebar
-            isOpen={isFileSidebarOpen}
-            onToggle={() => setIsFileSidebarOpen(prev => !prev)}
-            nuggets={nuggets}
-            projects={projects}
-            selectedNuggetId={selectedNuggetId}
-            onSelectNugget={(id) => {
-              setReferenceImage(null);
-              setUseReferenceImage(false);
-              setSelectedNuggetId(id);
-            }}
-            onCreateProject={handleCreateProject}
-            onRenameProject={(id, newName) => {
-              updateProject(id, p => ({ ...p, name: newName, lastModifiedAt: Date.now() }));
-            }}
-            onDeleteProject={(id) => deleteProject(id)}
-            onToggleProjectCollapse={(id) => {
-              updateProject(id, p => ({ ...p, isCollapsed: !p.isCollapsed }));
-            }}
-            onCreateNuggetInProject={(projectId) => {
-              setNuggetCreationProjectId(projectId);
-              setShowNuggetCreation(true);
-            }}
-            onRenameNugget={(id, newName) => {
-              updateNugget(id, n => ({ ...n, name: newName, lastModifiedAt: Date.now() }));
-            }}
-            onDeleteNugget={(id) => deleteNugget(id)}
-            onCopyNuggetToProject={handleCopyNuggetToProject}
-            onMoveNuggetToProject={handleMoveNuggetToProject}
-            onCreateProjectForNugget={handleCreateProjectForNugget}
-          />
+          {/* Style Studio modal */}
+          {showStyleStudio && (
+            <StyleStudioModal
+              onClose={() => setShowStyleStudio(false)}
+            />
+          )}
 
-          {/* Main content area (everything except FileSidebar) */}
-          <div className="flex-1 flex flex-col overflow-hidden">
-            {/* Active nugget header */}
-            {selectedNugget && (() => {
-              const parentProject = projects.find(p => p.nuggetIds.includes(selectedNugget.id));
+          {/* Subject edit modal */}
+          {subjectEditNuggetId &&
+            (() => {
+              const nugget = nuggets.find((n) => n.id === subjectEditNuggetId);
+              if (!nugget) return null;
               return (
-                <div className="shrink-0 h-9 flex items-center justify-center px-5 border-b border-zinc-100 bg-white relative">
-                  <div className="flex items-baseline gap-0 min-w-0 text-[15px] tracking-tight text-zinc-900">
-                    {parentProject && (
-                      <>
-                        <span className="font-light italic text-[13px] text-zinc-400">project</span>
-                        <span className="mx-1.5" />
-                        <span className="font-semibold not-italic truncate">{parentProject.name}</span>
-                        <span className="mx-2.5 text-zinc-200 font-light">|</span>
-                      </>
-                    )}
-                    <span className="font-light italic text-[13px] text-zinc-400">nugget</span>
-                    <span className="mx-1.5" />
-                    <span className="font-semibold not-italic truncate">{selectedNugget.name}</span>
-                  </div>
-                  <button
-                    onClick={() => { setSidebarWidth(230); setChatPanelPercent(40); }}
-                    className="absolute left-3 top-1/2 -translate-y-1/2 h-6 px-2.5 flex items-center gap-1.5 rounded-[6px] hover:rounded-[14px] border border-zinc-200 hover:border-black text-zinc-400 hover:text-black text-[9px] font-black uppercase tracking-[0.15em] cursor-pointer hover:bg-zinc-50"
-                    style={{ transition: 'border-radius 200ms ease, border-color 150ms ease, color 150ms ease, background-color 150ms ease' }}
-                    title="Reset panel widths to default"
-                  >
-                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                      <rect x="2" y="4" width="6" height="16" rx="1"/><rect x="9" y="4" width="6" height="16" rx="1"/><rect x="16" y="4" width="6" height="16" rx="1"/>
-                    </svg>
-                    Reset View
-                  </button>
-                </div>
+                <SubjectEditModal
+                  nuggetId={nugget.id}
+                  nuggetName={nugget.name}
+                  currentSubject={nugget.subject || ''}
+                  isRegenerating={isRegeneratingSubject}
+                  onSave={handleSaveSubject}
+                  onRegenerate={handleRegenerateSubject}
+                  onClose={() => setSubjectEditNuggetId(null)}
+                />
               );
             })()}
 
-            <div className="flex flex-1 overflow-hidden">
-          {/* Nuggetcards Sidebar */}
-          <aside
-            style={{ width: sidebarWidth }}
-            className="border-r border-zinc-100 shrink-0 relative flex flex-col bg-[#fafafa]"
-            onDragOver={(e) => e.preventDefault()}
-            onDrop={(e) => e.preventDefault()}
+          {/* App-level unsaved changes dialog (for nugget/panel switching) */}
+          {appPendingAction && appPendingDirtyPanel && (
+            <UnsavedChangesDialog
+              title={`Unsaved changes in ${appPendingDirtyPanel === 'cards' ? 'Cards' : 'Sources'} editor`}
+              description="You have unsaved edits. Save or discard them to continue."
+              onSave={handleAppDialogSave}
+              onDiscard={handleAppDialogDiscard}
+              onCancel={handleAppDialogCancel}
+            />
+          )}
+
+          {/* Zoom Overlay */}
+          {zoomState.imageUrl && <ZoomOverlay zoomState={zoomState} onClose={closeZoom} />}
+
+          <div
+            className="flex flex-col h-screen overflow-hidden"
+            style={{
+              background: darkMode ? '#18181b' : 'linear-gradient(180deg, #f0f4f8 0%, #e8edf2 40%, #f5f7fa 100%)',
+            }}
           >
-            {/* Header */}
-            <div className="shrink-0 flex flex-col items-center justify-center px-5 pt-2 pb-1">
-              <span className="text-[17px] tracking-tight text-zinc-900">
-                <span className="font-light italic">cards</span><span className="font-semibold not-italic">content</span>
-              </span>
-              <p className="text-[9px] text-zinc-400 mt-0.5 text-center">shift, ctrl/⌘ for multiple selection</p>
-            </div>
+            {/* Header bar — always visible */}
+            {(() => {
+              const parentProject = selectedNugget
+                ? projects.find((p) => p.nuggetIds.includes(selectedNugget.id))
+                : null;
+              return (
+                <header className="shrink-0 h-9 flex items-center justify-between px-5 border-b border-zinc-100 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-[0_1px_3px_rgba(0,0,0,0.04)] dark:shadow-none relative z-[110]">
+                  {/* Left spacer — matches right-side width for centering */}
+                  <div className="w-48 shrink-0" />
 
-            {/* Toolbar */}
-            <div className="shrink-0 border-b border-zinc-100">
-              <div className="px-5 h-[32px] flex items-center justify-center gap-0">
-                <button
-                  onClick={() => {
-                    if (!selectedNugget) return;
-                    const newId = crypto.randomUUID();
-                    const existingNames = selectedNugget.headings.map(h => h.text);
-                    const newHeading: Heading = {
-                      id: newId,
-                      level: 1,
-                      text: getUniqueName('Custom Card', existingNames),
-                      synthesisMap: { Standard: '' },
-                      createdAt: Date.now(),
-                      lastEditedAt: Date.now(),
-                    };
-                    // Add heading to nugget + insightsSession
-                    updateNugget(selectedNugget.id, n => ({
-                      ...n,
-                      headings: [...n.headings, newHeading],
-                      lastModifiedAt: Date.now(),
-                    }));
-                    setInsightsSession(prev => prev ? { ...prev, headings: [...prev.headings, newHeading] } : prev);
-                    setActiveHeadingId(newId);
-                    setEditingCardContent({ headingId: newId, level: 'Standard', isCustomCard: true });
+                  {/* Center: interactive breadcrumb navigation */}
+                  {selectedNugget ? (
+                    <nav
+                      ref={breadcrumbRef}
+                      aria-label="Breadcrumb"
+                      data-breadcrumb-dropdown
+                      className="flex items-center gap-0 min-w-0 text-[15px] text-zinc-900 dark:text-zinc-100"
+                    >
+                      {/* ── Project segment ── */}
+                      {parentProject && (
+                        <>
+                          <span className="font-light italic text-[13px] text-zinc-400 select-none">project</span>
+                          <span className="mx-2.5" />
+                          <div className="relative">
+                            <button
+                              onClick={() => setBreadcrumbDropdown((prev) => (prev === 'project' ? null : 'project'))}
+                              className="font-semibold not-italic truncate max-w-[200px] px-2.5 py-1 -my-1 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors inline-flex items-center gap-1.5"
+                              title={parentProject.name}
+                              aria-expanded={breadcrumbDropdown === 'project'}
+                            >
+                              {parentProject.name}
+                              <svg
+                                width="10"
+                                height="10"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2.5"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                className="ml-0.5 opacity-40 shrink-0"
+                              >
+                                <polyline points="6 9 12 15 18 9" />
+                              </svg>
+                            </button>
+                            {breadcrumbDropdown === 'project' && (
+                              <div className="absolute top-full left-0 mt-1 min-w-[180px] max-h-64 overflow-y-auto bg-white dark:bg-zinc-900 rounded-lg shadow-lg border border-zinc-200 dark:border-zinc-700 z-[120] py-1 text-[12px]">
+                                {projects.map((proj) => (
+                                  <button
+                                    key={proj.id}
+                                    onClick={() => handleBreadcrumbProjectSelect(proj.id)}
+                                    disabled={proj.nuggetIds.length === 0}
+                                    className={`w-full text-left px-3 py-1.5 truncate transition-colors ${proj.id === parentProject.id ? 'bg-zinc-200 dark:bg-zinc-700 font-medium text-zinc-800 dark:text-zinc-200' : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-700 hover:text-zinc-800 dark:hover:text-zinc-200'} ${proj.nuggetIds.length === 0 ? 'opacity-40 cursor-default' : ''}`}
+                                  >
+                                    {proj.name}
+                                    {proj.nuggetIds.length === 0 && (
+                                      <span className="text-zinc-400 text-[10px] ml-1">(empty)</span>
+                                    )}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                          <span className="mx-5 text-zinc-200 dark:text-zinc-600 font-light select-none">|</span>
+                        </>
+                      )}
+
+                      {/* ── Nugget segment ── */}
+                      <span className="font-light italic text-[13px] text-zinc-400 select-none">nugget</span>
+                      <span className="mx-2.5" />
+                      <div className="relative">
+                        <button
+                          onClick={() => setBreadcrumbDropdown((prev) => (prev === 'nugget' ? null : 'nugget'))}
+                          className="font-semibold not-italic truncate max-w-[200px] px-2.5 py-1 -my-1 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors inline-flex items-center gap-1.5"
+                          title={selectedNugget.name}
+                          aria-expanded={breadcrumbDropdown === 'nugget'}
+                        >
+                          {selectedNugget.name}
+                          <svg
+                            width="10"
+                            height="10"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2.5"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            className="ml-0.5 opacity-40 shrink-0"
+                          >
+                            <polyline points="6 9 12 15 18 9" />
+                          </svg>
+                        </button>
+                        {breadcrumbDropdown === 'nugget' && (
+                          <div className="absolute top-full left-0 mt-1 min-w-[180px] max-h-64 overflow-y-auto bg-white dark:bg-zinc-900 rounded-lg shadow-lg border border-zinc-200 dark:border-zinc-700 z-[120] py-1 text-[12px]">
+                            {/* Nuggets in current project */}
+                            {nuggetDropdownItems.parent && nuggetDropdownItems.inProject.length > 0 && (
+                              <>
+                                <div className="px-3 py-1 text-[10px] text-zinc-400 dark:text-zinc-500 uppercase tracking-wider font-medium">
+                                  {nuggetDropdownItems.parent.name}
+                                </div>
+                                {nuggetDropdownItems.inProject.map((n) => (
+                                  <button
+                                    key={n.id}
+                                    onClick={() => handleBreadcrumbNuggetSelect(n.id)}
+                                    className={`w-full text-left px-3 py-1.5 truncate transition-colors ${n.id === selectedNuggetId ? 'bg-zinc-200 dark:bg-zinc-700 font-medium text-zinc-800 dark:text-zinc-200' : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-700 hover:text-zinc-800 dark:hover:text-zinc-200'}`}
+                                  >
+                                    {n.name}
+                                  </button>
+                                ))}
+                              </>
+                            )}
+                            {/* Ungrouped nuggets */}
+                            {nuggetDropdownItems.ungrouped.length > 0 && (
+                              <>
+                                {nuggetDropdownItems.parent && nuggetDropdownItems.inProject.length > 0 && (
+                                  <div className="border-t border-zinc-100 dark:border-zinc-700 my-1" />
+                                )}
+                                <div className="px-3 py-1 text-[10px] text-zinc-400 dark:text-zinc-500 uppercase tracking-wider font-medium">
+                                  Ungrouped
+                                </div>
+                                {nuggetDropdownItems.ungrouped.map((n) => (
+                                  <button
+                                    key={n.id}
+                                    onClick={() => handleBreadcrumbNuggetSelect(n.id)}
+                                    className={`w-full text-left px-3 py-1.5 truncate transition-colors ${n.id === selectedNuggetId ? 'bg-zinc-200 dark:bg-zinc-700 font-medium text-zinc-800 dark:text-zinc-200' : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-700 hover:text-zinc-800 dark:hover:text-zinc-200'}`}
+                                  >
+                                    {n.name}
+                                  </button>
+                                ))}
+                              </>
+                            )}
+                            {/* Other projects' nuggets */}
+                            {projects
+                              .filter((p) => p.id !== nuggetDropdownItems.parent?.id && p.nuggetIds.length > 0)
+                              .map((proj) => (
+                                <React.Fragment key={proj.id}>
+                                  <div className="border-t border-zinc-100 dark:border-zinc-700 my-1" />
+                                  <div className="px-3 py-1 text-[10px] text-zinc-400 dark:text-zinc-500 uppercase tracking-wider font-medium">
+                                    {proj.name}
+                                  </div>
+                                  {proj.nuggetIds.map((nid) => {
+                                    const n = nuggets.find((ng) => ng.id === nid);
+                                    if (!n) return null;
+                                    return (
+                                      <button
+                                        key={n.id}
+                                        onClick={() => handleBreadcrumbNuggetSelect(n.id)}
+                                        className={`w-full text-left px-3 py-1.5 truncate transition-colors ${n.id === selectedNuggetId ? 'bg-zinc-200 dark:bg-zinc-700 font-medium text-zinc-800 dark:text-zinc-200' : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-700 hover:text-zinc-800 dark:hover:text-zinc-200'}`}
+                                      >
+                                        {n.name}
+                                      </button>
+                                    );
+                                  })}
+                                </React.Fragment>
+                              ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* ── Document segment ── */}
+                      {activeDocForBreadcrumb && (
+                        <>
+                          <span className="mx-5 text-zinc-200 dark:text-zinc-600 font-light select-none">|</span>
+                          <span className="font-light italic text-[13px] text-zinc-400 select-none">doc</span>
+                          <span className="mx-2.5" />
+                          <div className="relative">
+                            <button
+                              onClick={() => setBreadcrumbDropdown((prev) => (prev === 'document' ? null : 'document'))}
+                              className="font-semibold not-italic truncate max-w-[200px] px-2.5 py-1 -my-1 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors inline-flex items-center gap-1.5"
+                              title={activeDocForBreadcrumb.name}
+                              aria-expanded={breadcrumbDropdown === 'document'}
+                            >
+                              {activeDocForBreadcrumb.name}
+                              <svg
+                                width="10"
+                                height="10"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2.5"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                className="ml-0.5 opacity-40 shrink-0"
+                              >
+                                <polyline points="6 9 12 15 18 9" />
+                              </svg>
+                            </button>
+                            {breadcrumbDropdown === 'document' && (
+                              <div className="absolute top-full left-0 mt-1 min-w-[180px] max-h-64 overflow-y-auto bg-white dark:bg-zinc-900 rounded-lg shadow-lg border border-zinc-200 dark:border-zinc-700 z-[120] py-1 text-[12px]">
+                                {nuggetDocs.map((doc) => (
+                                  <button
+                                    key={doc.id}
+                                    onClick={() => handleBreadcrumbDocSelect(doc.id)}
+                                    className={`w-full text-left px-3 py-1.5 truncate transition-colors flex items-center gap-2 ${doc.id === activeDocForBreadcrumb.id ? 'bg-zinc-200 dark:bg-zinc-700 font-medium text-zinc-800 dark:text-zinc-200' : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-700 hover:text-zinc-800 dark:hover:text-zinc-200'}`}
+                                  >
+                                    <span className="truncate">{doc.name}</span>
+                                    <span className="text-[10px] text-zinc-400 dark:text-zinc-500 shrink-0 uppercase">
+                                      {doc.sourceType === 'native-pdf' ? 'pdf' : 'md'}
+                                    </span>
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </>
+                      )}
+                    </nav>
+                  ) : (
+                    <div className="text-[15px] tracking-tight text-zinc-900 dark:text-zinc-100">
+                      <span className="font-light italic">info</span>
+                      <span className="font-semibold not-italic">nugget</span>
+                    </div>
+                  )}
+
+                  {/* Right: dark mode toggle + token/cost counter */}
+                  <div className="w-48 shrink-0 flex items-center justify-end gap-1 relative" ref={usageDropdownRef}>
+                    <button
+                      onClick={toggleDarkMode}
+                      className="w-6 h-6 rounded-full flex items-center justify-center text-zinc-400 hover:text-zinc-600 dark:text-zinc-500 dark:hover:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-700 transition-colors"
+                      title={darkMode ? 'Switch to light mode' : 'Switch to dark mode'}
+                    >
+                      {darkMode ? (
+                        <svg
+                          width="13"
+                          height="13"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        >
+                          <circle cx="12" cy="12" r="5" />
+                          <line x1="12" y1="1" x2="12" y2="3" />
+                          <line x1="12" y1="21" x2="12" y2="23" />
+                          <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
+                          <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
+                          <line x1="1" y1="12" x2="3" y2="12" />
+                          <line x1="21" y1="12" x2="23" y2="12" />
+                          <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
+                          <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
+                        </svg>
+                      ) : (
+                        <svg
+                          width="13"
+                          height="13"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        >
+                          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+                        </svg>
+                      )}
+                    </button>
+                    <button
+                      onClick={() => setShowUsageDropdown((prev) => !prev)}
+                      className={`text-[10px] transition-colors font-mono tracking-tight px-2 py-0.5 rounded hover:bg-zinc-50 dark:hover:bg-zinc-700 ${usageTotals.callCount > 0 ? 'text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300' : 'text-zinc-300 dark:text-zinc-600 hover:text-zinc-400 dark:hover:text-zinc-500'}`}
+                      aria-expanded={showUsageDropdown}
+                    >
+                      {formatCost(usageTotals.totalCost)} ·{' '}
+                      {formatTokens(usageTotals.totalInputTokens + usageTotals.totalOutputTokens)} tokens
+                    </button>
+
+                    {showUsageDropdown && (
+                      <div className="absolute top-full right-0 mt-1 w-64 bg-white dark:bg-zinc-900 rounded-lg shadow-lg border border-zinc-200 dark:border-zinc-700 z-50 py-2 px-3 text-[11px] text-zinc-600 dark:text-zinc-300">
+                        {/* Claude row */}
+                        <div className="flex justify-between items-center py-1 border-b border-zinc-50 dark:border-zinc-700">
+                          <span className="font-medium text-zinc-700 dark:text-zinc-300">Claude</span>
+                          <span className="font-mono">{formatCost(usageTotals.claudeCost)}</span>
+                        </div>
+                        <div className="flex justify-between items-center py-0.5 text-[10px] text-zinc-400 dark:text-zinc-500 pl-2">
+                          <span>
+                            In: {formatTokens(usageTotals.claudeInputTokens)} · Out:{' '}
+                            {formatTokens(usageTotals.claudeOutputTokens)}
+                          </span>
+                        </div>
+
+                        {/* Gemini row */}
+                        <div className="flex justify-between items-center py-1 border-b border-zinc-50 dark:border-zinc-700 mt-1">
+                          <span className="font-medium text-zinc-700 dark:text-zinc-300">Gemini</span>
+                          <span className="font-mono">{formatCost(usageTotals.geminiCost)}</span>
+                        </div>
+                        <div className="flex justify-between items-center py-0.5 text-[10px] text-zinc-400 dark:text-zinc-500 pl-2">
+                          <span>
+                            In: {formatTokens(usageTotals.geminiInputTokens)} · Out:{' '}
+                            {formatTokens(usageTotals.geminiOutputTokens)}
+                          </span>
+                        </div>
+
+                        {/* Cache savings */}
+                        {usageTotals.totalCacheReadTokens > 0 && (
+                          <div className="flex justify-between items-center py-0.5 text-[10px] text-zinc-400 dark:text-zinc-500 mt-1 border-t border-zinc-100 dark:border-zinc-700 pt-1">
+                            <span>Cache reads</span>
+                            <span className="font-mono">{formatTokens(usageTotals.totalCacheReadTokens)}</span>
+                          </div>
+                        )}
+
+                        {/* Total */}
+                        <div className="flex justify-between items-center py-1 mt-1 border-t border-zinc-100 dark:border-zinc-700 font-medium text-zinc-700 dark:text-zinc-300">
+                          <span>Total ({usageTotals.callCount} calls)</span>
+                          <span className="font-mono">{formatCost(usageTotals.totalCost)}</span>
+                        </div>
+
+                        {/* Reset button */}
+                        <button
+                          onClick={() => {
+                            resetUsage();
+                            setShowUsageDropdown(false);
+                          }}
+                          className="w-full mt-1.5 text-[10px] text-zinc-400 dark:text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-700 rounded py-1 transition-colors"
+                        >
+                          Reset counters
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </header>
+              );
+            })()}
+
+            {/* 6-panel row: Projects | Sources | Chat | Auto-Deck | Cards | Assets */}
+            <main className="flex flex-1 overflow-hidden gap-[4px] p-[4px]">
+              {/* Panel 1: Projects */}
+              <ErrorBoundary name="Projects">
+                <ProjectsPanel
+                  isOpen={expandedPanel === 'projects'}
+                  onToggle={() =>
+                    appGatedAction(() => setExpandedPanel((prev) => (prev === 'projects' ? null : 'projects')))
+                  }
+                  onSelectProject={(projectId) =>
+                    appGatedAction(() => {
+                      setReferenceImage(null);
+                      setUseReferenceImage(false);
+                      selectEntity({ projectId });
+                    })
+                  }
+                  onSelectNugget={(id) =>
+                    appGatedAction(() => {
+                      setReferenceImage(null);
+                      setUseReferenceImage(false);
+                      selectEntity({ nuggetId: id });
+                    })
+                  }
+                  onCreateProject={() => {
+                    setProjectCreationChainToNugget(true);
+                    setShowProjectCreation(true);
                   }}
-                  className="h-7 px-2.5 text-[11px] flex items-center justify-center cursor-pointer rounded-[6px] hover:rounded-[14px] font-medium border border-black text-zinc-500 hover:text-zinc-800 hover:bg-zinc-50"
-                  style={{ transition: 'border-radius 200ms ease, background-color 150ms ease, color 150ms ease' }}
+                  onRenameProject={(id, newName) => {
+                    updateProject(id, (p) => ({ ...p, name: newName, lastModifiedAt: Date.now() }));
+                  }}
+                  onToggleProjectCollapse={(id) => {
+                    updateProject(id, (p) => ({ ...p, isCollapsed: !p.isCollapsed }));
+                  }}
+                  onCreateNuggetInProject={(projectId) => {
+                    setNuggetCreationProjectId(projectId);
+                    setShowNuggetCreation(true);
+                  }}
+                  onRenameNugget={(id, newName) => {
+                    updateNugget(id, (n) => ({ ...n, name: newName, lastModifiedAt: Date.now() }));
+                  }}
+                  onCopyNuggetToProject={handleCopyNuggetToProject}
+                  onMoveNuggetToProject={handleMoveNuggetToProject}
+                  onCreateProjectForNugget={handleCreateProjectForNugget}
+                  onDuplicateProject={handleDuplicateProject}
+                  onRenameDocument={async (docId, newName) => {
+                    // Re-upload to Files API with the new filename
+                    const doc = selectedNugget?.documents.find((d) => d.id === docId);
+                    if (doc?.fileId) {
+                      try {
+                        deleteFromFilesAPI(doc.fileId);
+                        // Native PDFs: re-upload binary; Markdown docs: re-upload text content
+                        const newFileId =
+                          doc.sourceType === 'native-pdf' && doc.pdfBase64
+                            ? await uploadToFilesAPI(
+                                base64ToBlob(doc.pdfBase64, 'application/pdf'),
+                                newName,
+                                'application/pdf',
+                              )
+                            : doc.content
+                              ? await uploadToFilesAPI(doc.content, newName, 'text/plain')
+                              : undefined;
+                        if (newFileId)
+                          updateNuggetDocument(docId, {
+                            ...doc,
+                            name: newName,
+                            fileId: newFileId,
+                            lastRenamedAt: Date.now(),
+                            version: (doc.version ?? 1) + 1,
+                          });
+                      } catch (err) {
+                        console.warn('[App] Files API re-upload on rename failed:', err);
+                      }
+                    }
+                    renameNuggetDocument(docId, newName);
+                  }}
+                  onRemoveDocument={(docId) => {
+                    const doc = selectedNugget?.documents.find((d) => d.id === docId);
+                    if (doc?.fileId) deleteFromFilesAPI(doc.fileId);
+                    removeNuggetDocument(docId);
+                  }}
+                  onCopyMoveDocument={handleCopyMoveDocument}
+                  onCreateNuggetWithDoc={handleCreateNuggetWithDoc}
+                  onUploadDocuments={handleUploadDocuments}
+                  onEditSubject={(nuggetId) => setSubjectEditNuggetId(nuggetId)}
+                  onOpenCardsPanel={() => appGatedAction(() => setExpandedPanel(null))}
+                  onOpenSourcesPanel={() => appGatedAction(() => setExpandedPanel('sources'))}
+                  otherNuggets={otherNuggetsList}
+                  projectNuggets={projectNuggetsList}
+                />
+              </ErrorBoundary>
+
+              {selectedNugget ? (
+                <>
+                  {/* Hard lock overlay — blocks all UI while TOC has unsaved changes (SourcesPanel at z-[107] stays above) */}
+                  {tocLockActive && expandedPanel === 'sources' && (
+                    <div className="fixed inset-0 z-[106] bg-black/20 cursor-not-allowed" />
+                  )}
+
+                  {/* Panel 2: Sources */}
+                  <ErrorBoundary name="Sources">
+                    <SourcesPanel
+                      ref={sourcesPanelRef}
+                      isOpen={expandedPanel === 'sources'}
+                      onToggle={() =>
+                        appGatedAction(() => setExpandedPanel((prev) => (prev === 'sources' ? null : 'sources')))
+                      }
+                      documents={nuggetDocs}
+                      onSaveDocument={handleSaveDocument}
+                      onGenerateCardContent={handleGenerateCardContent}
+                      generatingSourceIds={generatingSourceIds}
+                      onUpdateDocumentStructure={(docId, newStructure) => {
+                        const doc = nuggetDocs.find((d) => d.id === docId);
+                        if (doc) updateNuggetDocument(docId, { ...doc, structure: newStructure });
+                      }}
+                      onSaveToc={handleSaveToc}
+                      onSaveBookmarks={(docId, newBookmarks) => {
+                        if (!selectedNugget) return;
+                        const doc = selectedNugget.documents.find((d) => d.id === docId);
+                        if (!doc) return;
+                        const newStructure = flattenBookmarks(newBookmarks);
+                        handleSaveToc(docId, newStructure);
+                        // Also update bookmarks directly on the document
+                        updateNuggetDocument(docId, {
+                          ...doc,
+                          bookmarks: newBookmarks,
+                          structure: newStructure,
+                          bookmarkSource: 'manual',
+                        });
+                      }}
+                      onRegenerateBookmarks={async (docId) => {
+                        if (!selectedNugget) return;
+                        const doc = selectedNugget.documents.find((d) => d.id === docId);
+                        if (!doc || !doc.pdfBase64) return;
+                        // Re-extract via Gemini from the PDF file
+                        const blob = base64ToBlob(doc.pdfBase64, 'application/pdf');
+                        const file = new File([blob], doc.name, { type: 'application/pdf' });
+                        const headings = await extractHeadingsWithGemini(file);
+                        if (headings.length > 0) {
+                          const bookmarks = headingsToBookmarks(headings);
+                          updateNuggetDocument(docId, {
+                            ...doc,
+                            bookmarks,
+                            bookmarkSource: 'ai_generated',
+                            structure: headings,
+                          });
+                          addToast({
+                            type: 'info',
+                            message: `Regenerated ${headings.length} bookmarks via AI`,
+                            duration: 5000,
+                          });
+                        } else {
+                          addToast({ type: 'warning', message: 'AI extraction returned no bookmarks', duration: 5000 });
+                        }
+                      }}
+                      onDirtyChange={setTocLockActive}
+                    />
+                  </ErrorBoundary>
+
+                  {/* Panel 3: Chat */}
+                  <ErrorBoundary name="Chat">
+                    <ChatPanel
+                      isOpen={expandedPanel === 'chat'}
+                      onToggle={() =>
+                        appGatedAction(() => setExpandedPanel((prev) => (prev === 'chat' ? null : 'chat')))
+                      }
+                      messages={insightsMessages}
+                      isLoading={insightsLabLoading}
+                      onSendMessage={sendInsightsMessage}
+                      onSaveAsCard={handleSaveAsCard}
+                      onClearChat={() => {
+                        clearInsightsMessages();
+                      }}
+                      onStop={stopInsightsResponse}
+                      documents={nuggetDocs}
+                      pendingDocChanges={pendingDocChanges}
+                      hasConversation={insightsHasConversation}
+                      onDocChangeContinue={handleDocChangeContinue}
+                      onDocChangeStartFresh={handleDocChangeStartFresh}
+                    />
+                  </ErrorBoundary>
+
+                  {/* Panel 4: Auto-Deck */}
+                  <ErrorBoundary name="Auto-Deck">
+                    <AutoDeckPanel
+                      isOpen={expandedPanel === 'auto-deck'}
+                      onToggle={() =>
+                        appGatedAction(() => setExpandedPanel((prev) => (prev === 'auto-deck' ? null : 'auto-deck')))
+                      }
+                      documents={nuggetDocs}
+                      session={autoDeckSession}
+                      onStartPlanning={autoDeckStartPlanning}
+                      onRevisePlan={autoDeckRevisePlan}
+                      onApprovePlan={autoDeckApprovePlan}
+                      onAbort={autoDeckAbort}
+                      onReset={autoDeckReset}
+                      onToggleCardIncluded={autoDeckToggleCardIncluded}
+                      onSetQuestionAnswer={autoDeckSetQuestionAnswer}
+                      onSetAllRecommended={autoDeckSetAllRecommended}
+                      onSetGeneralComment={autoDeckSetGeneralComment}
+                      onRetryFromReview={autoDeckRetryFromReview}
+                    />
+                  </ErrorBoundary>
+
+                  {/* Panel 5: Cards */}
+                  <ErrorBoundary name="Cards">
+                    <CardsPanel
+                      ref={cardsPanelRef}
+                      cards={nuggetCards}
+                      hasSelectedNugget={!!selectedNugget}
+                      onToggleSelection={toggleInsightsCardSelection}
+                      onSelectExclusive={selectInsightsCardExclusive}
+                      onSelectRange={selectInsightsCardRange}
+                      onSelectAll={toggleSelectAllInsightsCards}
+                      onDeselectAll={deselectAllInsightsCards}
+                      onDeleteCard={deleteInsightsCard}
+                      onDeleteSelectedCards={deleteSelectedInsightsCards}
+                      onRenameCard={renameInsightsCard}
+                      onCopyMoveCard={handleCopyMoveCard}
+                      otherNuggets={otherNuggetsList}
+                      projectNuggets={projectNuggetsList}
+                      onCreateNuggetForCard={handleCreateNuggetForCard}
+                      onCreateCustomCard={handleCreateCustomCard}
+                      onSaveCardContent={handleSaveCardContent}
+                      detailLevel={activeLogicTab}
+                      onGenerateCardImage={wrappedGenerateCard}
+                      onReorderCards={reorderInsightsCards}
+                    />
+                  </ErrorBoundary>
+
+                  {/* Panel 5: Assets */}
+                  <ErrorBoundary name="Assets">
+                    <AssetsPanel
+                      committedSettings={committedSettings}
+                      menuDraftOptions={menuDraftOptions}
+                      setMenuDraftOptions={setMenuDraftOptions}
+                      activeLogicTab={activeLogicTab}
+                      setActiveLogicTab={setActiveLogicTab}
+                      genStatus={genStatus}
+                      onGenerateCard={wrappedGenerateCard}
+                      onGenerateAll={() => {
+                        const cards = selectedNugget?.cards || [];
+                        const selected = cards.filter((c) => c.selected);
+                        if (selected.length === 0) {
+                          alert('Please select cards first.');
+                          return;
+                        }
+                        setManifestCards(selected);
+                      }}
+                      selectedCount={insightsSelectedCount}
+                      onZoomImage={openZoom}
+                      onImageModified={handleInsightsImageModified}
+                      contentDirty={false}
+                      currentContent={activeCard?.synthesisMap?.[activeCard?.detailLevel || activeLogicTab] || ''}
+                      onDownloadImage={handleDownloadImage}
+                      onDownloadAllImages={handleDownloadAllImages}
+                      referenceImage={referenceImage}
+                      onStampReference={handleStampReference}
+                      useReferenceImage={useReferenceImage}
+                      onToggleUseReference={() => setUseReferenceImage((prev) => !prev)}
+                      onReferenceImageModified={handleReferenceImageModified}
+                      onDeleteReference={handleDeleteReference}
+                      mismatchDialog={mismatchDialog}
+                      onDismissMismatch={() => setMismatchDialog(null)}
+                      manifestCards={manifestCards}
+                      onExecuteBatch={wrappedExecuteBatch}
+                      onCloseManifest={() => setManifestCards(null)}
+                      onDeleteCardImage={handleDeleteCardImage}
+                      onDeleteCardVersions={handleDeleteCardVersions}
+                      onDeleteAllCardImages={handleDeleteAllCardImages}
+                      onUsage={recordUsage}
+                      onOpenStyleStudio={() => setShowStyleStudio(true)}
+                    />
+                  </ErrorBoundary>
+                </>
+              ) : (
+                <div
+                  className="flex-1 flex flex-col items-center justify-center text-center px-8 transition-colors duration-200"
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    setEmptyDragging(true);
+                  }}
+                  onDragLeave={() => setEmptyDragging(false)}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    setEmptyDragging(false);
+                  }}
+                  style={emptyDragging ? { backgroundColor: 'rgba(42, 159, 212, 0.04)' } : undefined}
                 >
-                  Custom Card
-                </button>
-              </div>
-            </div>
-            {selectedNugget ? (
-              <>
-                {/* Heading list */}
-                <div ref={sidebarRef} className="flex-1 overflow-y-auto px-2 pb-4">
-                  <InsightsHeadingList
-                    headings={insightsSession?.headings || []}
-                    activeHeadingId={activeHeadingId}
-                    onHeadingClick={setActiveHeadingId}
-                    onHeadingDoubleClick={(id) => {
-                      setActiveHeadingId(id);
-                      insightsLabRef.current?.switchToCardView();
-                    }}
-                    onToggleSelection={toggleInsightsHeadingSelection}
-                    onSelectExclusive={selectInsightsHeadingExclusive}
-                    onSelectRange={selectInsightsHeadingRange}
-                    onSelectAll={toggleSelectAllInsightsHeadings}
-                    onDeselectAll={deselectAllInsightsHeadings}
-                    onDeleteHeading={deleteInsightsHeading}
-                    onDeleteSelectedHeadings={deleteSelectedInsightsHeadings}
-                    onRenameHeading={renameInsightsHeading}
-                    onEditHeading={editInsightsHeading}
-                    onCopyMoveHeading={(headingId, targetNuggetId, mode) => {
-                      if (!selectedNugget) return;
-                      const heading = selectedNugget.headings.find(h => h.id === headingId);
-                      if (!heading) return;
-                      const targetNugget = nuggets.find(n => n.id === targetNuggetId);
-                      const targetHeadingNames = targetNugget ? targetNugget.headings.map(h => h.text) : [];
-                      const uniqueName = getUniqueName(heading.text, targetHeadingNames);
-                      const now = Date.now();
-                      const newHeadingId = `heading-${Math.random().toString(36).substr(2, 9)}`;
-                      const copiedHeading: Heading = {
-                        ...heading,
-                        id: newHeadingId,
-                        text: uniqueName,
-                        selected: false,
-                        createdAt: now,
-                        lastEditedAt: now,
-                      };
-                      // Add to target nugget
-                      updateNugget(targetNuggetId, n => ({
-                        ...n,
-                        headings: [...n.headings, copiedHeading],
-                        lastModifiedAt: now,
-                      }));
-                      // If move, also remove from source nugget
-                      if (mode === 'move') {
-                        updateNugget(selectedNugget.id, n => ({
-                          ...n,
-                          headings: n.headings.filter(h => h.id !== headingId),
-                          lastModifiedAt: now,
-                        }));
-                        // If moved heading was active, clear active
-                        if (activeHeadingId === headingId) setActiveHeadingId(null);
-                      }
-                    }}
-                    otherNuggets={nuggets.filter(n => n.id !== selectedNugget?.id).map(n => ({ id: n.id, name: n.name }))}
-                    projectNuggets={projects.map(p => ({
-                      projectId: p.id,
-                      projectName: p.name,
-                      nuggets: p.nuggetIds
-                        .filter(nid => nid !== selectedNugget?.id)
-                        .map(nid => nuggets.find(n => n.id === nid))
-                        .filter((n): n is Nugget => !!n)
-                        .map(n => ({ id: n.id, name: n.name })),
-                    }))}
-                    onCreateNuggetForHeading={(nuggetName, headingId) => {
-                      if (!selectedNugget || !headingId) return;
-                      const heading = selectedNugget.headings.find(h => h.id === headingId);
-                      if (!heading) return;
-                      const sourceProject = projects.find(p => p.nuggetIds.includes(selectedNugget.id));
-                      const projectNuggetNames = sourceProject
-                        ? sourceProject.nuggetIds.map(nid => nuggets.find(n => n.id === nid)?.name || '').filter(Boolean)
-                        : nuggets.map(n => n.name);
-                      const uniqueNuggetName = getUniqueName(nuggetName, projectNuggetNames);
-                      const now = Date.now();
-                      const newHeadingId = `heading-${Math.random().toString(36).substr(2, 9)}`;
-                      const copiedHeading: Heading = {
-                        ...heading,
-                        id: newHeadingId,
-                        selected: false,
-                        createdAt: now,
-                        lastEditedAt: now,
-                      };
-                      const newNugget: Nugget = {
-                        id: `nugget-${Math.random().toString(36).substr(2, 9)}`,
-                        name: uniqueNuggetName,
-                        type: 'insights',
-                        documents: [],
-                        headings: [copiedHeading],
-                        messages: [],
-                        createdAt: now,
-                        lastModifiedAt: now,
-                      };
-                      addNugget(newNugget);
-                      if (sourceProject) {
-                        addNuggetToProject(sourceProject.id, newNugget.id);
-                      }
-                    }}
-                  />
+                  <div
+                    className={`w-12 h-12 bg-accent-blue rounded-full flex items-center justify-center shadow-lg shadow-[rgba(42,159,212,0.2)] mb-5 transition-transform duration-300 ${emptyDragging ? 'scale-110' : ''}`}
+                  >
+                    <div className="w-4 h-4 bg-white rounded-sm rotate-45" />
+                  </div>
+                  <h2 className="text-xl tracking-tight mb-1">
+                    <span className="font-light italic">info</span>
+                    <span className="font-semibold not-italic">nugget</span>
+                  </h2>
+                  {emptyDragging ? (
+                    <p className="text-zinc-400 text-sm font-light mb-6 max-w-xs">Drop to upload</p>
+                  ) : (
+                    <>
+                      <div className="mb-4">
+                        <PanelRequirements level="sources" />
+                      </div>
+                      {nuggets.length === 0 ? (
+                        <button
+                          onClick={() => {
+                            setProjectCreationChainToNugget(true);
+                            setShowProjectCreation(true);
+                          }}
+                          className="px-5 py-2.5 rounded-xl bg-black text-white text-sm font-medium hover:shadow-lg hover:scale-105 active:scale-95 transition-all duration-200"
+                        >
+                          Create Project
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => setShowNuggetCreation(true)}
+                          className="px-5 py-2.5 rounded-xl bg-black text-white text-sm font-medium hover:shadow-lg hover:scale-105 active:scale-95 transition-all duration-200"
+                        >
+                          Create New Nugget
+                        </button>
+                      )}
+                    </>
+                  )}
                 </div>
-              </>
-            ) : (
-              <div ref={sidebarRef} className="flex-1 overflow-y-auto px-4 pb-4" />
-            )}
+              )}
+            </main>
 
-            {sidebarCanScroll && (
-              <div className="absolute bottom-0 left-0 right-0 flex justify-center pb-3 pt-8 pointer-events-none bg-gradient-to-t from-[#fafafa] via-[#fafafa]/80 to-transparent">
-                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-zinc-300"><circle cx="12" cy="12" r="10"/><path d="M8 12l4 4 4-4" strokeLinecap="round" strokeLinejoin="round"/></svg>
-              </div>
-            )}
-          </aside>
-
-          {/* Drag handle */}
-          <div onMouseDown={handleSidebarDragStart} className="w-1 shrink-0 cursor-col-resize hover:bg-acid-lime/40 active:bg-acid-lime/60 transition-colors duration-150 z-10 -ml-px" />
-
-          <div ref={chatPanelContainerRef} className="flex-1 flex overflow-hidden">
-            {selectedNugget && insightsSession ? (
-              <>
-                {/* Insights Lab Panel */}
-                <InsightsLabPanel
-                  ref={insightsLabRef}
-                  messages={insightsMessages}
-                  isLoading={insightsLabLoading}
-                  onSendMessage={sendInsightsMessage}
-                  onSaveAsHeading={handleSaveAsHeading}
-                  onClearChat={() => {
-                    clearInsightsMessages();
-                    // Also propagate to old state for backward compat
-                    setInsightsSession(prev => prev ? { ...prev, messages: [] } : prev);
-                  }}
-                  onStop={stopInsightsResponse}
-                  widthPercent={chatPanelPercent}
-                  activeHeading={activeHeading || null}
-                  activeLogicTab={activeLogicTab}
-                  onEditCardContent={handleEditCardContent}
-                  documents={nuggetDocs}
-                  onGenerateCardContent={async (_editorHeadingId, detailLevel, headingText) => {
-                    if (!selectedNugget || !headingText) return;
-
-                    // Gather document content from all enabled nugget documents
-                    const enabledDocs = selectedNugget.documents.filter(d => d.enabled !== false && d.content);
-                    const fullDocument = enabledDocs.map(d => d.content).join('\n\n---\n\n');
-                    if (!fullDocument) return;
-
-                    // Find the section text for this heading
-                    const escapedText = headingText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-                    const headingRegex = new RegExp(`^(#{1,6})\\s+${escapedText}\\s*$`, 'gm');
-                    const match = headingRegex.exec(fullDocument);
-                    const startOffset = match ? match.index : 0;
-                    // Find the next same-or-higher-level heading to delimit the section
-                    const headingLevel = match ? match[1].length : 1;
-                    const nextHeadingRegex = new RegExp(`^#{1,${headingLevel}}\\s+`, 'gm');
-                    nextHeadingRegex.lastIndex = startOffset + (match ? match[0].length : 0);
-                    const nextMatch = nextHeadingRegex.exec(fullDocument);
-                    const sectionText = fullDocument.substring(startOffset, nextMatch ? nextMatch.index : fullDocument.length);
-
-                    // Build prompt and call Claude
-                    const synthesisPrompt = buildContentPrompt(headingText, detailLevel, fullDocument, sectionText, true);
-
-                    try {
-                      let synthesizedText = await callClaude(synthesisPrompt, {
-                        systemBlocks: [
-                          { text: 'You are an expert content synthesizer. You extract, restructure, and condense document content into infographic-ready text. Follow the formatting and word count requirements precisely.', cache: false },
-                          { text: `FULL DOCUMENT CONTEXT:\n${fullDocument}`, cache: true },
-                        ],
-                        maxTokens: 4096,
-                      });
-                      // Strip any leading H1 that Claude may have included, then re-add with the correct title
-                      synthesizedText = synthesizedText.replace(/^\s*#\s+[^\n]*\n*/, '');
-                      synthesizedText = `# ${headingText}\n\n${synthesizedText.trimStart()}`;
-
-                      // Create a new card heading with the synthesized content
-                      const newHeadingId = `insight-${Math.random().toString(36).substr(2, 9)}`;
-                      const activeDocNames = enabledDocs.map(d => d.name);
-                      const uniqueCardName = getUniqueName(headingText, selectedNugget.headings.map(h => h.text));
-
-                      const newHeading: Heading = {
-                        id: newHeadingId,
-                        text: uniqueCardName,
-                        level: 1,
-                        selected: false,
-                        synthesisMap: { [detailLevel]: synthesizedText },
-                        isSynthesizingMap: {},
-                        settings: { ...menuDraftOptions, levelOfDetail: detailLevel },
-                        createdAt: Date.now(),
-                        sourceDocuments: activeDocNames,
-                      };
-
-                      // Add heading to nugget
-                      updateNugget(selectedNugget.id, n => ({
-                        ...n,
-                        headings: [...n.headings, newHeading],
-                        lastModifiedAt: Date.now(),
-                      }));
-
-                      // Propagate to old state for backward compat
-                      setInsightsSession(prev => {
-                        if (!prev) return prev;
-                        return { ...prev, headings: [...prev.headings, newHeading] };
-                      });
-
-                      // Select the new heading
-                      setActiveHeadingId(newHeadingId);
-                    } catch (err) {
-                      console.error('Generate card content failed:', err);
-                    }
-                  }}
-                  onSaveDocument={(docId, newContent) => {
-                    if (!selectedNugget) return;
-                    const doc = selectedNugget.documents.find(d => d.id === docId);
-                    if (doc) updateNuggetDocument(docId, { ...doc, content: newContent });
-                  }}
-                  onToggleDocument={(docId) => toggleNuggetDocument(docId)}
-                  onRenameDocument={(docId, newName) => renameNuggetDocument(docId, newName)}
-                  onRemoveDocument={(docId) => removeNuggetDocument(docId)}
-                  onCopyMoveDocument={(docId, targetNuggetId, mode) => {
-                    if (!selectedNugget) return;
-                    const doc = selectedNugget.documents.find(d => d.id === docId);
-                    if (!doc) return;
-                    // Auto-increment name if it collides in target nugget
-                    const targetNugget = nuggets.find(n => n.id === targetNuggetId);
-                    const targetDocNames = targetNugget ? targetNugget.documents.map(d => d.name) : [];
-                    const uniqueDocName = getUniqueName(doc.name, targetDocNames, true);
-                    // Copy the document to the target nugget with a new ID
-                    const newDocId = `doc-${Math.random().toString(36).substr(2, 9)}`;
-                    const docCopy: UploadedFile = { ...doc, id: newDocId, name: uniqueDocName };
-                    // Add to target nugget
-                    updateNugget(targetNuggetId, n => ({
-                      ...n,
-                      documents: [...n.documents, docCopy],
-                      lastModifiedAt: Date.now(),
-                    }));
-                    // If move, also remove from source nugget
-                    if (mode === 'move') {
-                      removeNuggetDocument(docId);
-                    }
-                  }}
-                  otherNuggets={nuggets.filter(n => n.id !== selectedNugget?.id).map(n => ({ id: n.id, name: n.name }))}
-                  projectNuggets={projects.map(p => ({
-                    projectId: p.id,
-                    projectName: p.name,
-                    nuggets: p.nuggetIds
-                      .filter(nid => nid !== selectedNugget?.id)
-                      .map(nid => nuggets.find(n => n.id === nid))
-                      .filter((n): n is Nugget => !!n)
-                      .map(n => ({ id: n.id, name: n.name })),
-                  }))}
-                  onCreateNuggetWithDoc={(nuggetName, docId) => {
-                    if (!selectedNugget) return;
-                    const doc = selectedNugget.documents.find(d => d.id === docId);
-                    if (!doc) return;
-                    // Auto-increment nugget name within the same project
-                    const sourceProject = projects.find(p => p.nuggetIds.includes(selectedNugget.id));
-                    const projectNuggetNames = sourceProject
-                      ? sourceProject.nuggetIds.map(nid => nuggets.find(n => n.id === nid)?.name || '').filter(Boolean)
-                      : nuggets.map(n => n.name);
-                    const uniqueNuggetName = getUniqueName(nuggetName, projectNuggetNames);
-                    const newDocId = `doc-${Math.random().toString(36).substr(2, 9)}`;
-                    const docCopy: UploadedFile = { ...doc, id: newDocId };
-                    const newNugget: Nugget = {
-                      id: `nugget-${Math.random().toString(36).substr(2, 9)}`,
-                      name: uniqueNuggetName,
-                      type: 'insights',
-                      documents: [docCopy],
-                      headings: [],
-                      messages: [],
-                      createdAt: Date.now(),
-                      lastModifiedAt: Date.now(),
-                    };
-                    addNugget(newNugget);
-                    // Add to same project as the source nugget (reuse sourceProject from above)
-                    if (sourceProject) {
-                      addNuggetToProject(sourceProject.id, newNugget.id);
-                    }
-                  }}
-                  onUploadDocuments={async (files) => {
-                    // Collect existing doc names + names assigned in this batch for dedup
-                    const currentDocNames = [...(selectedNugget?.documents || []).map(d => d.name)];
-                    for (const file of Array.from(files)) {
-                      const uniqueName = getUniqueName(file.name, currentDocNames, true);
-                      currentDocNames.push(uniqueName);
-                      const placeholder = createPlaceholderDocument(file);
-                      placeholder.name = uniqueName;
-                      addNuggetDocument(placeholder);
-                      processFileToDocument(file, placeholder.id)
-                        .then(processed => updateNuggetDocument(placeholder.id, { ...processed, name: uniqueName }))
-                        .catch(() => updateNuggetDocument(placeholder.id, { ...placeholder, status: 'error' as const }));
-                    }
-                  }}
-                  pendingDocChanges={pendingDocChanges}
-                  hasConversation={insightsHasConversation}
-                  onDocChangeContinue={handleDocChangeContinue}
-                  onDocChangeStartFresh={handleDocChangeStartFresh}
-                />
-
-                {/* Insights lab drag handle */}
-                <div onMouseDown={handleChatPanelDragStart} className="w-px shrink-0 cursor-col-resize bg-zinc-200 hover:bg-acid-lime/40 active:bg-acid-lime/60 transition-colors duration-150 z-10" />
-
-                {/* Asset Laboratory Panel */}
-                <AssetLab
-                  activeHeading={activeHeading}
-                  committedSettings={committedSettings}
-                  menuDraftOptions={menuDraftOptions}
-                  setMenuDraftOptions={setMenuDraftOptions}
-                  activeLogicTab={activeLogicTab}
-                  setActiveLogicTab={setActiveLogicTab}
-                  genStatus={genStatus}
-                  onGenerateCard={wrappedGenerateCard}
-                  onGenerateAll={() => {
-                    const headings = selectedNugget?.headings || [];
-                    const selected = headings.filter(h => h.selected);
-                    if (selected.length === 0) { alert('Please select headings first.'); return; }
-                    setManifestHeadings(selected);
-                  }}
-                  selectedCount={insightsSelectedCount}
-                  onZoomImage={openZoom}
-                  onImageModified={handleInsightsImageModified}
-                  contentDirty={false}
-                  currentContent={activeHeading?.synthesisMap?.[(activeHeading?.settings || DEFAULT_STYLING).levelOfDetail] || ''}
-                  onDownloadImage={handleDownloadImage}
-                  onDownloadAllImages={handleDownloadAllImages}
-                  referenceImage={referenceImage}
-                  onStampReference={handleStampReference}
-                  useReferenceImage={useReferenceImage}
-                  onToggleUseReference={() => setUseReferenceImage(prev => !prev)}
-                  onReferenceImageModified={handleReferenceImageModified}
-                  onDeleteReference={handleDeleteReference}
-                  mismatchDialog={mismatchDialog}
-                  onDismissMismatch={() => setMismatchDialog(null)}
-                  manifestHeadings={manifestHeadings}
-                  onExecuteBatch={wrappedExecuteBatch}
-                  onCloseManifest={() => setManifestHeadings(null)}
-                />
-              </>
-            ) : (
-              <div
-                className="flex-1 flex flex-col items-center justify-center text-center px-8 transition-colors duration-200"
-                onDragOver={(e) => { e.preventDefault(); setEmptyDragging(true); }}
-                onDragLeave={() => setEmptyDragging(false)}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  setEmptyDragging(false);
-                }}
-                style={emptyDragging ? { backgroundColor: 'rgba(204, 255, 0, 0.04)' } : undefined}
-              >
-                <div className={`w-12 h-12 bg-acid-lime rounded-full flex items-center justify-center shadow-lg shadow-[#ccff0033] mb-5 transition-transform duration-300 ${emptyDragging ? 'scale-110' : ''}`}>
-                  <div className="w-4 h-4 bg-white rounded-sm rotate-45" />
-                </div>
-                <h2 className="text-xl tracking-tight mb-1">
-                  <span className="font-light italic">info</span><span className="font-semibold not-italic">nugget</span>
-                </h2>
-                {emptyDragging ? (
-                  <p className="text-zinc-400 text-sm font-light mb-6 max-w-xs">Drop to upload</p>
-                ) : nuggets.length === 0 ? (
-                  <>
-                    <p className="text-zinc-400 text-sm font-light mb-6 max-w-xs">
-                      Create your first nugget to start building infographics.
-                    </p>
-                    <button
-                      onClick={() => setShowNuggetCreation(true)}
-                      className="px-5 py-2.5 rounded-xl bg-black text-white text-sm font-medium hover:shadow-lg hover:scale-105 active:scale-95 transition-all duration-200"
-                    >
-                      Create Nugget
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    <p className="text-zinc-400 text-sm font-light mb-6 max-w-xs">
-                      Select a nugget from the sidebar or create a new one.
-                    </p>
-                    <button
-                      onClick={() => setShowNuggetCreation(true)}
-                      className="px-5 py-2.5 rounded-xl bg-black text-white text-sm font-medium hover:shadow-lg hover:scale-105 active:scale-95 transition-all duration-200"
-                    >
-                      Create New Nugget
-                    </button>
-                  </>
-                )}
-              </div>
-            )}
+            {/* Footer */}
+            <footer className="shrink-0 flex items-center justify-center py-1.5 border-t border-zinc-100 dark:border-zinc-700 bg-white dark:bg-zinc-900 relative z-[102]">
+              <p className="text-[10px] text-zinc-400 dark:text-zinc-500 tracking-wide">
+                <span className="font-light italic tracking-tight">info</span>
+                <span className="font-semibold not-italic tracking-tight">nugget</span>
+                <span className="ml-1">
+                  is AI powered and can make mistakes. Please double-check generated content and cards.
+                </span>
+              </p>
+            </footer>
           </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Footer */}
-        <footer className="shrink-0 flex items-center justify-center py-1.5 border-t border-zinc-100 bg-white">
-          <p className="text-[10px] text-zinc-400 tracking-wide">
-            <span className="font-light italic tracking-tight">info</span><span className="font-semibold not-italic tracking-tight">nugget</span>
-            <span className="ml-1">is AI powered and can make mistakes. Please double-check generated content and cards.</span>
-          </p>
-        </footer>
-      </div>
-      </>
+        </>
       )}
     </div>
   );

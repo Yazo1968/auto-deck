@@ -1,11 +1,20 @@
-
-import { DetailLevel, StylingOptions, NuggetType, ChatMessage, InsightsDocument, ImageVersion, UploadedFile, DocChangeEvent } from '../../types';
+import {
+  DetailLevel,
+  StylingOptions,
+  NuggetType,
+  ChatMessage,
+  InsightsDocument,
+  DocChangeEvent,
+  SourceOrigin,
+} from '../../types';
 
 // ── Stored types (what lives in the database) ──
 
 export interface AppSessionState {
   selectedNuggetId: string | null;
-  activeHeadingId: string | null;
+  selectedDocumentId?: string | null;
+  selectedProjectId?: string | null;
+  activeCardId: string | null;
   // Legacy fields — kept for backward compat reads, ignored on write
   selectedFileId?: string | null;
   workflowMode?: string;
@@ -28,6 +37,7 @@ export interface StoredHeading {
   level: number;
   text: string;
   selected?: boolean;
+  detailLevel?: DetailLevel;
   settings?: StylingOptions;
   synthesisMap?: Partial<Record<DetailLevel, string>>;
   visualPlanMap?: Partial<Record<DetailLevel, string>>;
@@ -39,7 +49,7 @@ export interface StoredHeading {
 }
 
 export interface StoredImageVersion {
-  imageUrl: string;   // guaranteed data URL (blob URLs converted before storage)
+  imageUrl: string; // guaranteed data URL (blob URLs converted before storage)
   timestamp: number;
   label: string;
 }
@@ -64,6 +74,8 @@ export interface StoredNugget {
   messages?: ChatMessage[];
   docChangeLog?: DocChangeEvent[];
   lastDocChangeSyncIndex?: number;
+  subject?: string;
+  stylingOptions?: StylingOptions;
   createdAt: number;
   lastModifiedAt: number;
 }
@@ -78,6 +90,38 @@ export interface StoredNuggetDocument {
   content?: string;
   status: 'ready' | 'error';
   progress: number;
+  /** Distinguishes how this document is stored and rendered. undefined = 'markdown' (backward compat). */
+  sourceType?: 'markdown' | 'native-pdf';
+  /** Raw PDF as base64 for iframe viewer (only for native-pdf documents). */
+  pdfBase64?: string;
+  /** Anthropic Files API file ID — used to reference the document in chat without re-uploading content. */
+  fileId?: string;
+  /** Document heading structure (TOC). For native PDFs, extracted via Claude; for markdown, derived from content. */
+  structure?: Array<{ level: number; text: string; id: string; startIndex?: number; page?: number }>;
+  /** How the TOC was extracted: from an explicit TOC page or by visual scanning. */
+  tocSource?: 'toc_page' | 'visual_scan';
+  /** Original file format before conversion to markdown. */
+  originalFormat?: 'md' | 'pdf';
+  /** Timestamp when this document was added to the nugget (epoch ms). */
+  createdAt?: number;
+  /** Timestamp when this document's content was last saved in the editor (epoch ms). */
+  lastEditedAt?: number;
+  /** Timestamp when this document was last renamed (epoch ms). */
+  lastRenamedAt?: number;
+  /** Original file name at upload time. */
+  originalName?: string;
+  /** How this document arrived in the nugget. */
+  sourceOrigin?: SourceOrigin;
+  /** Version counter — increments on rename or content edit. */
+  version?: number;
+  /** Timestamp when chat was last enabled (epoch ms). */
+  lastEnabledAt?: number;
+  /** Timestamp when chat was last disabled (epoch ms). */
+  lastDisabledAt?: number;
+  /** Nested bookmark tree (native-pdf only). Single source of truth for document structure. */
+  bookmarks?: Array<{ id: string; title: string; page: number; level: number; children: any[] }>;
+  /** How the bookmark tree was obtained (native-pdf only). */
+  bookmarkSource?: 'pdf_bookmarks' | 'ai_generated' | 'manual';
 }
 
 export interface StoredProject {
@@ -150,18 +194,44 @@ export interface StorageBackend {
 
   // Nugget headings (keyed by nuggetId)
   saveNuggetHeadings(nuggetId: string, headings: StoredHeading[]): Promise<void>;
+  saveNuggetHeading(heading: StoredHeading): Promise<void>;
   loadNuggetHeadings(nuggetId: string): Promise<StoredHeading[]>;
   deleteNuggetHeadings(nuggetId: string): Promise<void>;
 
   // Nugget images (keyed by nuggetId)
   saveNuggetImage(image: StoredImage): Promise<void>;
+  saveNuggetImages(images: StoredImage[]): Promise<void>;
   loadNuggetImages(nuggetId: string): Promise<StoredImage[]>;
   deleteNuggetImages(nuggetId: string): Promise<void>;
+  deleteNuggetImage(fileId: string, headingId: string, level: string): Promise<void>;
+
+  // Atomic nugget save (headings + images + documents in one transaction)
+  saveNuggetDataAtomic(
+    nuggetId: string,
+    nugget: StoredNugget,
+    headings: StoredHeading[],
+    images: StoredImage[],
+    documents: StoredNuggetDocument[],
+  ): Promise<void>;
+
+  // Lightweight nugget ID enumeration (no full deserialization)
+  loadAllNuggetIds(): Promise<string[]>;
+
+  // Legacy store cleanup (clear migration-only stores)
+  clearLegacyStores(): Promise<void>;
 
   // Projects
   saveProject(project: StoredProject): Promise<void>;
   loadProjects(): Promise<StoredProject[]>;
   deleteProject(projectId: string): Promise<void>;
+
+  // Token usage
+  saveTokenUsage(totals: Record<string, unknown>): Promise<void>;
+  loadTokenUsage(): Promise<Record<string, unknown> | null>;
+
+  // Custom styles
+  saveCustomStyles(styles: unknown[]): Promise<void>;
+  loadCustomStyles(): Promise<unknown[] | null>;
 
   // Clear everything
   clearAll(): Promise<void>;

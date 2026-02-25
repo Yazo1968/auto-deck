@@ -20,12 +20,8 @@
  * @param existingNames  Names that already exist in the scope
  * @param isFile  When true, insert the counter before the file extension
  */
-export function getUniqueName(
-  baseName: string,
-  existingNames: string[],
-  isFile = false,
-): string {
-  const lower = existingNames.map(n => n.toLowerCase());
+export function getUniqueName(baseName: string, existingNames: string[], isFile = false): string {
+  const lower = existingNames.map((n) => n.toLowerCase());
   if (!lower.includes(baseName.toLowerCase())) return baseName;
 
   let counter = 2;
@@ -54,13 +50,9 @@ export function getUniqueName(
  * @param existingNames  Existing names in scope
  * @param excludeSelf  Optionally exclude one name from the check (the item's current name)
  */
-export function isNameTaken(
-  name: string,
-  existingNames: string[],
-  excludeSelf?: string,
-): boolean {
+export function isNameTaken(name: string, existingNames: string[], excludeSelf?: string): boolean {
   const trimmed = name.trim().toLowerCase();
-  return existingNames.some(n => {
+  return existingNames.some((n) => {
     if (excludeSelf && n.toLowerCase() === excludeSelf.toLowerCase()) return false;
     return n.toLowerCase() === trimmed;
   });

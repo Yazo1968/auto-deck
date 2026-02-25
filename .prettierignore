@@ -1,0 +1,21 @@
+# Build output
+dist/
+
+# Dependencies
+node_modules/
+
+# Reference/backup files
+reference files (unused)/
+
+# Environment
+.env
+.env.local
+
+# Package manager
+package-lock.json
+
+# Audit reports (markdown prose, not code)
+audit-reports/
+
+# PDF worker (vendored, minified)
+public/

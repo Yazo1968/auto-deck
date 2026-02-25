@@ -10,7 +10,7 @@ import { Annotation, NormalizedPoint } from '../types';
 export function generateRedlineMap(
   annotations: Annotation[],
   naturalW: number,
-  naturalH: number
+  naturalH: number,
 ): { redlineDataUrl: string; instructions: string } {
   // Create offscreen canvas at natural resolution
   const canvas = document.createElement('canvas');
@@ -58,9 +58,11 @@ function toCanvas(p: NormalizedPoint, w: number, h: number): { x: number; y: num
 function renderRedlinePin(
   ctx: CanvasRenderingContext2D,
   position: NormalizedPoint,
-  w: number, h: number,
+  w: number,
+  h: number,
   index: number,
-  red: string, white: string
+  red: string,
+  white: string,
 ) {
   const { x, y } = toCanvas(position, w, h);
   const radius = Math.max(16, Math.min(w, h) * 0.02);
@@ -84,10 +86,13 @@ function renderRedlinePin(
 
 function renderRedlineRectangle(
   ctx: CanvasRenderingContext2D,
-  topLeft: NormalizedPoint, bottomRight: NormalizedPoint,
-  w: number, h: number,
-  red: string, white: string,
-  strokeWidth: number
+  topLeft: NormalizedPoint,
+  bottomRight: NormalizedPoint,
+  w: number,
+  h: number,
+  red: string,
+  white: string,
+  strokeWidth: number,
 ) {
   const tl = toCanvas(topLeft, w, h);
   const br = toCanvas(bottomRight, w, h);
@@ -108,10 +113,12 @@ function renderRedlineRectangle(
 
 function renderRedlineArrow(
   ctx: CanvasRenderingContext2D,
-  start: NormalizedPoint, end: NormalizedPoint,
-  w: number, h: number,
+  start: NormalizedPoint,
+  end: NormalizedPoint,
+  w: number,
+  h: number,
   red: string,
-  strokeWidth: number
+  strokeWidth: number,
 ) {
   const s = toCanvas(start, w, h);
   const e = toCanvas(end, w, h);
@@ -133,14 +140,8 @@ function renderRedlineArrow(
   ctx.fillStyle = red;
   ctx.beginPath();
   ctx.moveTo(e.x, e.y);
-  ctx.lineTo(
-    e.x - headSize * Math.cos(angle - halfAngle),
-    e.y - headSize * Math.sin(angle - halfAngle)
-  );
-  ctx.lineTo(
-    e.x - headSize * Math.cos(angle + halfAngle),
-    e.y - headSize * Math.sin(angle + halfAngle)
-  );
+  ctx.lineTo(e.x - headSize * Math.cos(angle - halfAngle), e.y - headSize * Math.sin(angle - halfAngle));
+  ctx.lineTo(e.x - headSize * Math.cos(angle + halfAngle), e.y - headSize * Math.sin(angle + halfAngle));
   ctx.closePath();
   ctx.fill();
 }
@@ -149,9 +150,10 @@ function renderRedlineSketch(
   ctx: CanvasRenderingContext2D,
   points: NormalizedPoint[],
   strokeWidth: number,
-  w: number, h: number,
+  w: number,
+  h: number,
   red: string,
-  _lineWidth: number
+  _lineWidth: number,
 ) {
   if (points.length < 2) return;
 
@@ -196,7 +198,7 @@ function synthesizeInstructions(annotations: Annotation[]): string {
       case 'pin': {
         const instruction = a.instruction || '(no instruction provided)';
         lines.push(
-          `${lines.length + 1}. [PIN #${pinIndex} at (${fmt(a.position.x)}, ${fmt(a.position.y)})]: "${instruction}"`
+          `${lines.length + 1}. [PIN #${pinIndex} at (${fmt(a.position.x)}, ${fmt(a.position.y)})]: "${instruction}"`,
         );
         pinIndex++;
         break;
@@ -204,21 +206,24 @@ function synthesizeInstructions(annotations: Annotation[]): string {
       case 'rectangle': {
         const instruction = a.instruction || '(no instruction provided)';
         lines.push(
-          `${lines.length + 1}. [RECTANGLE covering (${fmt(a.topLeft.x)}, ${fmt(a.topLeft.y)}) to (${fmt(a.bottomRight.x)}, ${fmt(a.bottomRight.y)})]: "${instruction}"`
+          `${lines.length + 1}. [RECTANGLE covering (${fmt(a.topLeft.x)}, ${fmt(a.topLeft.y)}) to (${fmt(a.bottomRight.x)}, ${fmt(a.bottomRight.y)})]: "${instruction}"`,
         );
         break;
       }
       case 'arrow': {
         const instruction = a.instruction || '(no instruction provided)';
         lines.push(
-          `${lines.length + 1}. [ARROW from (${fmt(a.start.x)}, ${fmt(a.start.y)}) to (${fmt(a.end.x)}, ${fmt(a.end.y)})]: "${instruction}"`
+          `${lines.length + 1}. [ARROW from (${fmt(a.start.x)}, ${fmt(a.start.y)}) to (${fmt(a.end.x)}, ${fmt(a.end.y)})]: "${instruction}"`,
         );
         break;
       }
       case 'sketch': {
         if (a.points.length > 0) {
           // Compute bounding box for spatial description
-          let minX = 1, maxX = 0, minY = 1, maxY = 0;
+          let minX = 1,
+            maxX = 0,
+            minY = 1,
+            maxY = 0;
           for (const p of a.points) {
             if (p.x < minX) minX = p.x;
             if (p.x > maxX) maxX = p.x;
@@ -227,7 +232,7 @@ function synthesizeInstructions(annotations: Annotation[]): string {
           }
           const instruction = a.instruction || '(no instruction provided)';
           lines.push(
-            `${lines.length + 1}. [HIGHLIGHTED AREA covering (${fmt(minX)}, ${fmt(minY)}) to (${fmt(maxX)}, ${fmt(maxY)})]: "${instruction}"`
+            `${lines.length + 1}. [HIGHLIGHTED AREA covering (${fmt(minX)}, ${fmt(minY)}) to (${fmt(maxX)}, ${fmt(maxY)})]: "${instruction}"`,
           );
         }
         break;

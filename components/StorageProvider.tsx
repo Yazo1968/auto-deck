@@ -1,16 +1,19 @@
-
 import React, { useState, useEffect } from 'react';
-import { UploadedFile, Heading, InsightsSession, Nugget, Project, InitialPersistedState } from '../types';
-import { AppProvider, useAppContext } from '../context/AppContext';
+import { UploadedFile, InsightsSession, Nugget, Project, InitialPersistedState, CustomStyle } from '../types';
+import { AppProvider } from '../context/AppContext';
+import { useNuggetContext } from '../context/NuggetContext';
+import { useProjectContext } from '../context/ProjectContext';
+import { useSelectionContext } from '../context/SelectionContext';
+import { useStyleContext } from '../context/StyleContext';
 import { IndexedDBBackend } from '../utils/storage/IndexedDBBackend';
 import { StorageBackend } from '../utils/storage/StorageBackend';
 import {
   deserializeFile,
-  deserializeHeading,
+  deserializeCard,
   deserializeNugget,
   deserializeNuggetDocument,
   deserializeProject,
-  serializeHeading,
+  serializeCard,
   serializeNugget,
   serializeNuggetDocument,
   serializeProject,
@@ -19,32 +22,60 @@ import {
 import { usePersistence } from '../hooks/usePersistence';
 import { LoadingScreen } from './LoadingScreen';
 
-// ── Singleton storage instance ──
+// ── Singleton storage instance (exported for direct use by useTokenUsage) ──
 
-const storage: StorageBackend = new IndexedDBBackend();
+export const storage: StorageBackend = new IndexedDBBackend();
 
 // ── Persistence connector (auto-save, renders nothing) ──
 
 const PersistenceConnector: React.FC = () => {
-  const {
-    activeHeadingId,
-    insightsSession,
-    nuggets,
-    projects,
-    selectedNuggetId,
-  } = useAppContext();
+  const { nuggets, selectedNuggetId, selectedDocumentId } = useNuggetContext();
+  const { projects } = useProjectContext();
+  const { activeCardId, selectedProjectId } = useSelectionContext();
+  const { customStyles } = useStyleContext();
 
   usePersistence({
     storage,
-    activeHeadingId,
-    insightsSession,
+    activeCardId,
     nuggets,
     projects,
     selectedNuggetId,
+    selectedDocumentId,
+    selectedProjectId,
+    customStyles,
   });
 
   return null;
 };
+
+// ── Startup integrity check: clean up orphaned data ──
+
+async function cleanupOrphanedData(storageBackend: StorageBackend, hydratedNuggetIds: Set<string>): Promise<void> {
+  try {
+    // Find nugget IDs in storage that weren't hydrated (orphans from crash/incomplete save)
+    const storedNuggetIds = await storageBackend.loadAllNuggetIds();
+    let orphanCount = 0;
+    for (const id of storedNuggetIds) {
+      if (!hydratedNuggetIds.has(id)) {
+        console.warn(`[Storage] Cleaning up orphaned nugget: ${id}`);
+        await storageBackend.deleteNugget(id);
+        await storageBackend.deleteNuggetDocuments(id);
+        await storageBackend.deleteNuggetHeadings(id);
+        await storageBackend.deleteNuggetImages(id);
+        orphanCount++;
+      }
+    }
+    if (orphanCount > 0) {
+      console.log(`[Storage] Cleaned up ${orphanCount} orphaned nugget(s)`);
+    }
+
+    // Belt and suspenders: clear any remaining legacy store data
+    await storageBackend.clearLegacyStores();
+  } catch (err) {
+    // Non-fatal — log and continue, don't block app startup
+    console.warn('[Storage] Orphan cleanup failed (non-fatal):', err);
+  }
+}
 
 // ── Hydration logic ──
 
@@ -61,6 +92,8 @@ async function hydrateFromStorage(): Promise<InitialPersistedState | null> {
     insightsImagesStored,
     storedNuggets,
     storedProjects,
+    storedTokenUsage,
+    storedCustomStyles,
   ] = await Promise.all([
     storage.loadAppState(),
     storage.loadFiles(),
@@ -70,19 +103,26 @@ async function hydrateFromStorage(): Promise<InitialPersistedState | null> {
     storage.loadInsightsImages(),
     storage.loadNuggets(),
     storage.loadProjects(),
+    storage.loadTokenUsage(),
+    storage.loadCustomStyles(),
   ]);
+
+  console.log('[Storage] Raw stores:', {
+    storedNuggets: storedNuggets.length,
+    storedProjects: storedProjects.length,
+    storedFiles: storedFiles.length,
+    hasInsightsSession: !!insightsSessionData,
+  });
 
   // Reconstitute insights session (legacy stores)
   let insightsSession: InsightsSession | null = null;
   if (insightsSessionData) {
-    const iHeadings = insightsHeadingsStored.map(sh =>
-      deserializeHeading(sh, insightsImagesStored)
-    );
+    const iHeadings = insightsHeadingsStored.map((sh) => deserializeCard(sh, insightsImagesStored));
     insightsSession = {
       id: insightsSessionData.id,
       documents: insightsDocs,
       messages: insightsSessionData.messages,
-      headings: iHeadings,
+      cards: iHeadings,
     };
   }
 
@@ -94,26 +134,24 @@ async function hydrateFromStorage(): Promise<InitialPersistedState | null> {
       storage.loadNuggetImages(sn.id),
       storage.loadNuggetDocuments(sn.id),
     ]);
-    const hydratedHeadings = headings.map(sh => deserializeHeading(sh, images));
-    const hydratedDocs = nuggetDocs.map(sd => deserializeNuggetDocument(sd));
+    const hydratedHeadings = headings.map((sh) => deserializeCard(sh, images));
+    const hydratedDocs = nuggetDocs.map((sd) => deserializeNuggetDocument(sd));
     nuggets.push(deserializeNugget(sn, hydratedHeadings, hydratedDocs));
   }
 
   // ── Runtime migration: v2 data → v3 (documents were in global library, nuggets had documentIds) ──
-  const nuggetsNeedDocMigration = nuggets.length > 0 && nuggets.every(n => n.documents.length === 0);
+  const nuggetsNeedDocMigration = nuggets.length > 0 && nuggets.every((n) => n.documents.length === 0);
   if (nuggetsNeedDocMigration) {
     const oldDocuments = await storage.loadDocuments();
     if (oldDocuments.length > 0) {
       console.log(`[Storage] Migrating v2→v3: ${oldDocuments.length} documents to embed in nuggets`);
-      const docMap = new Map(oldDocuments.map(sd => [sd.id, deserializeFile(sd)]));
+      const docMap = new Map(oldDocuments.map((sd) => [sd.id, deserializeFile(sd)]));
 
       for (const nugget of nuggets) {
-        const rawNugget = storedNuggets.find(sn => sn.id === nugget.id) as any;
+        const rawNugget = storedNuggets.find((sn) => sn.id === nugget.id) as any;
         const oldDocIds: string[] = rawNugget?.documentIds ?? [];
         if (oldDocIds.length > 0) {
-          nugget.documents = oldDocIds
-            .map(id => docMap.get(id))
-            .filter((d): d is UploadedFile => d !== undefined);
+          nugget.documents = oldDocIds.map((id) => docMap.get(id)).filter((d): d is UploadedFile => d !== undefined);
           for (const doc of nugget.documents) {
             await storage.saveNuggetDocument(serializeNuggetDocument(nugget.id, doc));
           }
@@ -131,12 +169,9 @@ async function hydrateFromStorage(): Promise<InitialPersistedState | null> {
     // Migrate old files → insights nuggets (convert synthesis type to insights)
     for (const sf of storedFiles) {
       if (sf.status !== 'ready') continue;
-      const [headings, images] = await Promise.all([
-        storage.loadHeadings(sf.id),
-        storage.loadImages(sf.id),
-      ]);
+      const [headings, images] = await Promise.all([storage.loadHeadings(sf.id), storage.loadImages(sf.id)]);
       if (headings.length > 0) {
-        const hydratedHeadings = headings.map(sh => deserializeHeading(sh, images));
+        const hydratedHeadings = headings.map((sh) => deserializeCard(sh, images));
         const file = deserializeFile(sf, hydratedHeadings);
         const nuggetId = `migrated-${sf.id}`;
         const nugget: Nugget = {
@@ -144,7 +179,7 @@ async function hydrateFromStorage(): Promise<InitialPersistedState | null> {
           name: sf.name.replace(/\.\w+$/, ''),
           type: 'insights',
           documents: [file],
-          headings: hydratedHeadings,
+          cards: hydratedHeadings,
           messages: [],
           createdAt: now,
           lastModifiedAt: now,
@@ -153,9 +188,9 @@ async function hydrateFromStorage(): Promise<InitialPersistedState | null> {
 
         await storage.saveNugget(serializeNugget(nugget));
         await storage.saveNuggetDocument(serializeNuggetDocument(nuggetId, file));
-        const storedH = nugget.headings.map(h => serializeHeading(h, nuggetId));
+        const storedH = nugget.cards.map((h) => serializeCard(h, nuggetId));
         await storage.saveNuggetHeadings(nuggetId, storedH);
-        for (const h of nugget.headings) {
+        for (const h of nugget.cards) {
           const imgs = extractImages(h, nuggetId);
           for (const img of imgs) {
             await storage.saveNuggetImage(img);
@@ -167,13 +202,11 @@ async function hydrateFromStorage(): Promise<InitialPersistedState | null> {
     // Migrate insights session → insights nugget
     if (insightsSession) {
       const nuggetId = `migrated-insights-${insightsSession.id}`;
-      const insightsDocs: UploadedFile[] = insightsSession.documents.map(doc => ({
+      const insightsDocs: UploadedFile[] = insightsSession.documents.map((doc) => ({
         id: doc.id,
         name: doc.name,
         size: doc.size,
-        type: doc.type === 'pdf' ? 'application/pdf'
-          : doc.type === 'docx' ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-          : 'text/markdown',
+        type: doc.type === 'pdf' ? 'application/pdf' : 'text/markdown',
         lastModified: now,
         content: doc.content,
         status: 'ready' as const,
@@ -185,7 +218,7 @@ async function hydrateFromStorage(): Promise<InitialPersistedState | null> {
         name: 'Migrated Insights',
         type: 'insights',
         documents: insightsDocs,
-        headings: insightsSession.headings,
+        cards: insightsSession.cards,
         messages: insightsSession.messages,
         createdAt: now,
         lastModifiedAt: now,
@@ -196,9 +229,9 @@ async function hydrateFromStorage(): Promise<InitialPersistedState | null> {
       for (const doc of insightsDocs) {
         await storage.saveNuggetDocument(serializeNuggetDocument(nuggetId, doc));
       }
-      const storedH = nugget.headings.map(h => serializeHeading(h, nuggetId));
+      const storedH = nugget.cards.map((h) => serializeCard(h, nuggetId));
       await storage.saveNuggetHeadings(nuggetId, storedH);
-      for (const h of nugget.headings) {
+      for (const h of nugget.cards) {
         const imgs = extractImages(h, nuggetId);
         for (const img of imgs) {
           await storage.saveNuggetImage(img);
@@ -219,7 +252,7 @@ async function hydrateFromStorage(): Promise<InitialPersistedState | null> {
   }
 
   // ── Reconstitute projects ──
-  let projects: Project[] = storedProjects.map(sp => deserializeProject(sp));
+  let projects: Project[] = storedProjects.map((sp) => deserializeProject(sp));
 
   // ── Migration: existing nuggets but no projects → create default project ──
   if (projects.length === 0 && nuggets.length > 0) {
@@ -227,7 +260,7 @@ async function hydrateFromStorage(): Promise<InitialPersistedState | null> {
     const defaultProject: Project = {
       id: `project-${now}-${Math.random().toString(36).substr(2, 9)}`,
       name: 'My Project',
-      nuggetIds: nuggets.map(n => n.id),
+      nuggetIds: nuggets.map((n) => n.id),
       createdAt: now,
       lastModifiedAt: now,
     };
@@ -236,16 +269,23 @@ async function hydrateFromStorage(): Promise<InitialPersistedState | null> {
     console.log(`[Storage] Migrated nuggets→project: created default "My Project" with ${nuggets.length} nuggets`);
   }
 
+  // ── Startup integrity check: clean up orphaned data ──
+  const hydratedNuggetIds = new Set(nuggets.map((n) => n.id));
+  await cleanupOrphanedData(storage, hydratedNuggetIds);
+
   // Only return state if there's actually data to restore
-  if (!insightsSession && nuggets.length === 0) return null;
+  if (nuggets.length === 0 && !storedTokenUsage) return null;
 
   return {
     nuggets,
     projects,
     selectedNuggetId: appState?.selectedNuggetId ?? null,
-    activeHeadingId: appState?.activeHeadingId ?? null,
+    selectedDocumentId: appState?.selectedDocumentId ?? null,
+    selectedProjectId: appState?.selectedProjectId ?? null,
+    activeCardId: appState?.activeCardId ?? null,
     workflowMode: 'insights',
-    insightsSession,
+    tokenUsageTotals: storedTokenUsage as Record<string, number> | undefined,
+    customStyles: (storedCustomStyles as CustomStyle[] | null) ?? undefined,
   };
 }
 
@@ -259,17 +299,23 @@ export const StorageProvider: React.FC<{ children: React.ReactNode }> = ({ child
     let cancelled = false;
 
     hydrateFromStorage()
-      .then(state => {
+      .then((state) => {
+        console.log(
+          '[Storage] Hydration result:',
+          state ? `${state.nuggets.length} nuggets, ${state.projects.length} projects` : 'null (no data)',
+        );
         if (!cancelled) setInitialState(state);
       })
-      .catch(err => {
+      .catch((err) => {
         console.error('[Storage] Hydration failed, starting fresh:', err);
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
       });
 
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   if (loading) {

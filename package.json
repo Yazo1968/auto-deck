@@ -6,19 +6,51 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "format": "prettier --write \"**/*.{ts,tsx,css,json,mjs}\"",
+    "format:check": "prettier --check \"**/*.{ts,tsx,css,json,mjs}\""
   },
   "dependencies": {
     "@google/genai": "^1.41.0",
-    "jszip": "^3.10.1",
+    "dompurify": "^3.3.1",
     "marked": "15.0.7",
+    "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "^5.4.624",
     "react": "^19.2.4",
     "react-dom": "^19.2.4"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.3",
+    "@tailwindcss/postcss": "^4.2.1",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
+    "@types/dompurify": "^3.0.5",
     "@types/node": "^22.14.0",
+    "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.0.0",
+    "autoprefixer": "^10.4.24",
+    "eslint": "^9.39.3",
+    "eslint-plugin-import": "^2.32.0",
+    "eslint-plugin-jsx-a11y": "^6.10.2",
+    "eslint-plugin-promise": "^7.2.1",
+    "eslint-plugin-react": "^7.37.5",
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "eslint-plugin-react-refresh": "^0.5.2",
+    "eslint-plugin-sonarjs": "^1.0.4",
+    "eslint-plugin-unicorn": "^63.0.0",
+    "globals": "^17.3.0",
+    "jscpd": "^4.0.8",
+    "jsdom": "^28.1.0",
+    "knip": "^5.85.0",
+    "madge": "^8.0.0",
+    "postcss": "^8.5.6",
+    "prettier": "^3.8.1",
+    "rollup-plugin-visualizer": "^7.0.0",
+    "tailwindcss": "^4.2.1",
     "typescript": "~5.8.2",
-    "vite": "^6.2.0"
+    "typescript-eslint": "^8.56.1",
+    "vite": "^6.2.0",
+    "vitest": "^4.0.18"
   }
 }

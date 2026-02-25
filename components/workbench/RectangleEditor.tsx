@@ -31,6 +31,7 @@ const RectangleEditor: React.FC<RectangleEditorProps> = ({ instruction, position
       clearTimeout(timer);
       window.removeEventListener('mousedown', handleClickOutside);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- handleSave is defined below and intentionally excluded to avoid re-registering listeners on every edit
   }, [text]);
 
   const handleSave = () => {
@@ -53,47 +54,77 @@ const RectangleEditor: React.FC<RectangleEditorProps> = ({ instruction, position
     e.stopPropagation();
   };
 
-  // Position the popover above the rectangle's top edge
+  // Position the popover above the annotation
   const popoverStyle: React.CSSProperties = {
     position: 'fixed',
-    left: Math.max(10, Math.min(position.x - 140, window.innerWidth - 300)),
-    top: Math.max(10, position.y - 170),
+    left: Math.max(16, Math.min(position.x - 180, window.innerWidth - 380)),
+    top: Math.max(16, Math.min(position.y - 150, window.innerHeight - 180)),
     zIndex: 120,
   };
 
   return (
-    <div ref={popoverRef} style={popoverStyle} className="animate-in fade-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
-      <div className="w-72 bg-white rounded-[6px] border border-black overflow-hidden">
-        <div className="px-4 py-3 border-b border-zinc-50 flex items-center justify-between">
-          <span className="text-[9px] font-black uppercase tracking-[0.2em] text-black">Area Instruction</span>
-          <button
-            onClick={onDelete}
-            className="text-zinc-400 hover:text-red-500 transition-colors"
-            title="Delete Rectangle"
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-              <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-            </svg>
-          </button>
+    <div
+      ref={popoverRef}
+      style={popoverStyle}
+      className="animate-in fade-in zoom-in-95 duration-200"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div className="w-[360px] bg-white dark:bg-zinc-900 rounded-lg border border-zinc-200 dark:border-zinc-700 shadow-lg dark:shadow-black/30 overflow-hidden">
+        <div className="px-4 py-2.5 flex items-center justify-between">
+          <span className="text-[11px] font-medium uppercase tracking-[0.15em] text-zinc-500 dark:text-zinc-400">
+            Area Instruction
+          </span>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={onDelete}
+              className="w-6 h-6 rounded-full flex items-center justify-center text-zinc-400 dark:text-zinc-500 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950 transition-colors"
+              title="Delete Annotation"
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M3 6h18" />
+                <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+                <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+              </svg>
+            </button>
+            <button
+              onClick={handleSave}
+              className="w-6 h-6 rounded-full flex items-center justify-center text-zinc-400 dark:text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-700 transition-colors"
+              title="Save & close"
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <polyline points="20 6 9 17 4 12" />
+              </svg>
+            </button>
+          </div>
         </div>
-        <div className="p-4">
+        <div className="px-4 pb-3">
           <textarea
             ref={textareaRef}
             value={text}
-            onChange={e => setText(e.target.value)}
+            onChange={(e) => setText(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="e.g., Redesign this chart area with updated data"
-            rows={3}
-            className="w-full bg-zinc-50 border border-black rounded-xl px-3 py-2 text-sm resize-none focus:outline-none transition-colors placeholder:text-zinc-300"
+            rows={6}
+            className="w-full bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg px-3 py-2.5 text-[13px] leading-relaxed text-zinc-700 dark:text-zinc-300 resize-none focus:outline-none focus:ring-2 focus:ring-zinc-400/50 dark:focus:ring-zinc-500/50 focus:border-zinc-400 dark:focus:border-zinc-500 transition-colors placeholder:text-zinc-400 dark:placeholder:text-zinc-500"
           />
-        </div>
-        <div className="px-4 pb-3 flex items-center justify-end space-x-2">
-          <button
-            onClick={handleSave}
-            className="px-4 py-1.5 rounded-full bg-white text-black border border-black text-[9px] font-black uppercase tracking-widest hover:scale-105 transition-all"
-          >
-            Done
-          </button>
         </div>
       </div>
     </div>

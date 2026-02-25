@@ -11,20 +11,19 @@ const MAX_VERSIONS = 10;
  * @param initialHistory - Optional pre-existing history (from heading.imageHistory)
  * @param originalImageUrl - The original card image URL (used to create "Original" entry if no history)
  */
-export function useVersionHistory(
-  initialHistory?: ImageVersion[],
-  originalImageUrl?: string | null
-) {
+export function useVersionHistory(initialHistory?: ImageVersion[], originalImageUrl?: string | null) {
   const [versions, setVersions] = useState<ImageVersion[]>(() => {
     if (initialHistory && initialHistory.length > 0) {
       return initialHistory;
     }
     if (originalImageUrl) {
-      return [{
-        imageUrl: originalImageUrl,
-        timestamp: Date.now(),
-        label: 'Original',
-      }];
+      return [
+        {
+          imageUrl: originalImageUrl,
+          timestamp: Date.now(),
+          label: 'Original',
+        },
+      ];
     }
     return [];
   });
@@ -41,9 +40,14 @@ export function useVersionHistory(
 
   // Cleanup blob URLs on unmount
   useEffect(() => {
+    const urls = blobUrlsRef.current;
     return () => {
-      blobUrlsRef.current.forEach(url => {
-        try { URL.revokeObjectURL(url); } catch (_) { /* ignore */ }
+      urls.forEach((url) => {
+        try {
+          URL.revokeObjectURL(url);
+        } catch (_) {
+          /* ignore */
+        }
       });
     };
   }, []);
@@ -53,7 +57,11 @@ export function useVersionHistory(
    */
   const revokeBlobUrl = useCallback((url: string) => {
     if (blobUrlsRef.current.has(url)) {
-      try { URL.revokeObjectURL(url); } catch (_) { /* ignore */ }
+      try {
+        URL.revokeObjectURL(url);
+      } catch (_) {
+        /* ignore */
+      }
       blobUrlsRef.current.delete(url);
     }
   }, []);
@@ -64,40 +72,43 @@ export function useVersionHistory(
    * all versions after currentIndex are discarded.
    * If stack exceeds MAX_VERSIONS, oldest is evicted.
    */
-  const pushVersion = useCallback((imageUrl: string, label: string) => {
-    // Track blob URLs
-    if (imageUrl.startsWith('blob:')) {
-      blobUrlsRef.current.add(imageUrl);
-    }
-
-    setVersions(prev => {
-      // Discard any "future" versions if user navigated back
-      const truncated = prev.slice(0, currentIndex + 1);
-
-      // Prepare new version
-      const newVersion: ImageVersion = {
-        imageUrl,
-        timestamp: Date.now(),
-        label,
-      };
-
-      let updated = [...truncated, newVersion];
-
-      // Evict oldest if over capacity
-      if (updated.length > MAX_VERSIONS) {
-        const evicted = updated.shift()!;
-        revokeBlobUrl(evicted.imageUrl);
+  const pushVersion = useCallback(
+    (imageUrl: string, label: string) => {
+      // Track blob URLs
+      if (imageUrl.startsWith('blob:')) {
+        blobUrlsRef.current.add(imageUrl);
       }
 
-      return updated;
-    });
+      setVersions((prev) => {
+        // Discard any "future" versions if user navigated back
+        const truncated = prev.slice(0, currentIndex + 1);
 
-    setCurrentIndex(prev => {
-      // We're appending after the current position (after truncation)
-      const newIdx = Math.min(currentIndex + 1, MAX_VERSIONS - 1);
-      return newIdx;
-    });
-  }, [currentIndex, revokeBlobUrl]);
+        // Prepare new version
+        const newVersion: ImageVersion = {
+          imageUrl,
+          timestamp: Date.now(),
+          label,
+        };
+
+        let updated = [...truncated, newVersion];
+
+        // Evict oldest if over capacity
+        if (updated.length > MAX_VERSIONS) {
+          const evicted = updated.shift()!;
+          revokeBlobUrl(evicted.imageUrl);
+        }
+
+        return updated;
+      });
+
+      setCurrentIndex((_prev) => {
+        // We're appending after the current position (after truncation)
+        const newIdx = Math.min(currentIndex + 1, MAX_VERSIONS - 1);
+        return newIdx;
+      });
+    },
+    [currentIndex, revokeBlobUrl],
+  );
 
   /**
    * Navigate to the previous version (undo).
@@ -125,37 +136,45 @@ export function useVersionHistory(
    * Jump to a specific version by index.
    * Returns the version's imageUrl, or null if invalid index.
    */
-  const restoreByIndex = useCallback((index: number): string | null => {
-    if (index < 0 || index >= versions.length) return null;
-    setCurrentIndex(index);
-    return versions[index]?.imageUrl || null;
-  }, [versions]);
+  const restoreByIndex = useCallback(
+    (index: number): string | null => {
+      if (index < 0 || index >= versions.length) return null;
+      setCurrentIndex(index);
+      return versions[index]?.imageUrl || null;
+    },
+    [versions],
+  );
 
   /**
    * Reset the history — used when card is regenerated from scratch.
    * Cleans up all blob URLs.
    */
-  const resetHistory = useCallback((newOriginalUrl?: string) => {
-    // Cleanup old blob URLs
-    versions.forEach(v => revokeBlobUrl(v.imageUrl));
+  const resetHistory = useCallback(
+    (newOriginalUrl?: string) => {
+      // Cleanup old blob URLs
+      versions.forEach((v) => revokeBlobUrl(v.imageUrl));
 
-    if (newOriginalUrl) {
-      setVersions([{
-        imageUrl: newOriginalUrl,
-        timestamp: Date.now(),
-        label: 'Original',
-      }]);
-      setCurrentIndex(0);
-    } else {
-      setVersions([]);
-      setCurrentIndex(0);
-    }
-  }, [versions, revokeBlobUrl]);
+      if (newOriginalUrl) {
+        setVersions([
+          {
+            imageUrl: newOriginalUrl,
+            timestamp: Date.now(),
+            label: 'Original',
+          },
+        ]);
+        setCurrentIndex(0);
+      } else {
+        setVersions([]);
+        setCurrentIndex(0);
+      }
+    },
+    [versions, revokeBlobUrl],
+  );
 
   const currentVersion = versions[currentIndex] || null;
   const canUndo = currentIndex > 0;
   const canRedo = currentIndex < versions.length - 1;
-  const modificationCount = versions.filter(v => v.label !== 'Original').length;
+  const modificationCount = versions.filter((v) => v.label !== 'Original').length;
 
   return {
     versions,

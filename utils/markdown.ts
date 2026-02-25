@@ -14,8 +14,6 @@ export const parseMarkdownStructure = (text: string): Heading[] => {
         id: `h-${index}-${Math.random().toString(36).substr(2, 4)}`,
         selected: false,
         startIndex: currentOffset,
-        synthesisMap: {},
-        isSynthesizingMap: {}
       });
     }
     currentOffset += line.length + 1;
@@ -37,10 +35,15 @@ export const htmlToMarkdown = (html: string): string => {
 
     const el = node as HTMLElement;
     const tag = el.tagName.toLowerCase();
-    const children = () => Array.from(node.childNodes).forEach(c => walk(c, listDepth));
+    const children = () => Array.from(node.childNodes).forEach((c) => walk(c, listDepth));
 
     switch (tag) {
-      case 'h1': case 'h2': case 'h3': case 'h4': case 'h5': case 'h6':
+      case 'h1':
+      case 'h2':
+      case 'h3':
+      case 'h4':
+      case 'h5':
+      case 'h6':
         if (md && !md.endsWith('\n')) md += '\n';
         md += '#'.repeat(parseInt(tag[1])) + ' ';
         children();
@@ -54,28 +57,35 @@ export const htmlToMarkdown = (html: string): string => {
       case 'br':
         md += '\n';
         break;
-      case 'strong': case 'b':
-        md += '**'; children(); md += '**';
+      case 'strong':
+      case 'b':
+        md += '**';
+        children();
+        md += '**';
         break;
-      case 'em': case 'i':
-        md += '_'; children(); md += '_';
+      case 'em':
+      case 'i':
+        md += '_';
+        children();
+        md += '_';
         break;
       case 'a': {
         const href = el.getAttribute('href') || '';
-        md += '['; children(); md += `](${href})`;
+        md += '[';
+        children();
+        md += `](${href})`;
         break;
       }
-      case 'ul': case 'ol':
+      case 'ul':
+      case 'ol':
         if (md && !md.endsWith('\n')) md += '\n';
-        Array.from(node.childNodes).forEach(c => walk(c, listDepth + 1));
+        Array.from(node.childNodes).forEach((c) => walk(c, listDepth + 1));
         if (!md.endsWith('\n')) md += '\n';
         break;
       case 'li': {
         const indent = '  '.repeat(Math.max(0, listDepth - 1));
         const parent = el.parentElement?.tagName.toLowerCase();
-        const bullet = parent === 'ol'
-          ? `${Array.from(el.parentElement!.children).indexOf(el) + 1}. `
-          : '- ';
+        const bullet = parent === 'ol' ? `${Array.from(el.parentElement!.children).indexOf(el) + 1}. ` : '- ';
         md += indent + bullet;
         children();
         if (!md.endsWith('\n')) md += '\n';
@@ -95,7 +105,9 @@ export const htmlToMarkdown = (html: string): string => {
       }
       case 'code':
         if (el.parentElement?.tagName.toLowerCase() !== 'pre') {
-          md += '`'; children(); md += '`';
+          md += '`';
+          children();
+          md += '`';
         }
         break;
       case 'hr':
@@ -106,9 +118,19 @@ export const htmlToMarkdown = (html: string): string => {
         const rows = el.querySelectorAll('tr');
         rows.forEach((tr, ri) => {
           const cells = tr.querySelectorAll('td, th');
-          md += '| ' + Array.from(cells).map(c => c.textContent?.trim() || '').join(' | ') + ' |\n';
+          md +=
+            '| ' +
+            Array.from(cells)
+              .map((c) => c.textContent?.trim() || '')
+              .join(' | ') +
+            ' |\n';
           if (ri === 0) {
-            md += '| ' + Array.from(cells).map(() => '---').join(' | ') + ' |\n';
+            md +=
+              '| ' +
+              Array.from(cells)
+                .map(() => '---')
+                .join(' | ') +
+              ' |\n';
           }
         });
         md += '\n';
@@ -127,6 +149,6 @@ export const htmlToMarkdown = (html: string): string => {
     }
   };
 
-  Array.from(tempDiv.childNodes).forEach(c => walk(c, 0));
+  Array.from(tempDiv.childNodes).forEach((c) => walk(c, 0));
   return md.trim().replace(/\n{3,}/g, '\n\n');
 };

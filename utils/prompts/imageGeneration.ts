@@ -1,9 +1,5 @@
 import { StylingOptions } from '../../types';
-import {
-  assembleRendererPrompt,
-  transformContentToTags,
-  hexToColorName,
-} from './promptUtils';
+import { assembleRendererPrompt, transformContentToTags, hexToColorName } from './promptUtils';
 
 // ─────────────────────────────────────────────────────────────────
 // Visualizer (Card Image Generation)
@@ -29,11 +25,12 @@ import {
 // ─────────────────────────────────────────────────────────────────
 
 export function buildVisualizerPrompt(
-  headingText: string,
+  cardTitle: string,
   contentToMap: string,
   settings: StylingOptions,
   visualPlan?: string,
-  useReference?: boolean
+  useReference?: boolean,
+  subject?: string,
 ): string {
   // The assembler handles all transformations:
   // - Builds narrative style/palette/typography block from settings
@@ -46,7 +43,7 @@ export function buildVisualizerPrompt(
       'treatment, container shapes, icon style, and spacing. The new card must look like ' +
       'a sibling of the reference. Derive layout from the content below, not the reference.'
     : undefined;
-  return assembleRendererPrompt(headingText, contentToMap, settings, visualPlan, referenceNote);
+  return assembleRendererPrompt(cardTitle, contentToMap, settings, visualPlan, referenceNote, subject);
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -64,10 +61,10 @@ export function buildVisualizerPrompt(
 
 export function buildModificationPrompt(
   instructions: string,
-  headingText: string | null,
-  hasRedline: boolean = true
+  cardTitle: string | null,
+  hasRedline: boolean = true,
 ): string {
-  const titleSuffix = headingText ? ` for "${headingText}"` : '';
+  const titleSuffix = cardTitle ? ` for "${cardTitle}"` : '';
 
   if (!hasRedline) {
     // Global instruction only — no redline map provided
@@ -110,11 +107,11 @@ Process: Study the original image carefully, noting its style, colors, fonts, an
 
 export function buildContentModificationPrompt(
   content: string,
-  headingText: string | null,
+  cardTitle: string | null,
   style?: string,
-  palette?: { background: string; primary: string; secondary: string; accent: string; text: string }
+  palette?: { background: string; primary: string; secondary: string; accent: string; text: string },
 ): string {
-  const titleSuffix = headingText ? ` titled "${headingText}"` : '';
+  const titleSuffix = cardTitle ? ` titled "${cardTitle}"` : '';
 
   // Opening: role + reference instruction
   const opening =
@@ -162,11 +159,14 @@ export function buildContentModificationPrompt(
 
   // Render instruction
   const renderInstruction =
-    `\n\nTranscribe the provided text exactly and completely. All text must be legible ` +
-    `with high contrast.`;
+    `\n\nEvery single piece of text content provided below must appear in the final image — ` +
+    `no heading, bullet point, statistic, or detail may be omitted. If the layout ` +
+    `cannot fit all the content, adapt it rather than dropping text. Reduce whitespace, ` +
+    `add rows, extend sections, or use a denser arrangement — but never cut content. ` +
+    `All text must be legible with high contrast.`;
 
   // Content: transform to bracketed tags
-  const contentBlock = '\n\n' + transformContentToTags(content, headingText || 'Untitled');
+  const contentBlock = '\n\n' + transformContentToTags(content, cardTitle || 'Untitled');
 
   return (opening + paletteBlock + styleBlock + typographyBlock + renderInstruction + contentBlock).trim();
 }

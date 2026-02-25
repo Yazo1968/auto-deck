@@ -1,12 +1,43 @@
+import {
+  UploadedFile,
+  Heading,
+  Card,
+  DetailLevel,
+  InsightsSession,
+  Nugget,
+  Project,
+  ImageVersion,
+  BookmarkNode,
+} from '../../types';
+import {
+  StoredFile,
+  StoredHeading,
+  StoredImage,
+  StoredInsightsSession,
+  StoredNugget,
+  StoredNuggetDocument,
+  StoredProject,
+} from './StorageBackend';
+import { headingsToBookmarks } from '../pdfBookmarks';
 
-import { UploadedFile, Heading, DetailLevel, InsightsSession, Nugget, Project, ImageVersion } from '../../types';
-import { StoredFile, StoredHeading, StoredImage, StoredImageVersion, StoredInsightsSession, StoredNugget, StoredNuggetDocument, StoredProject } from './StorageBackend';
+const DETAIL_LEVELS: DetailLevel[] = [
+  'Executive',
+  'Standard',
+  'Detailed',
+  'TitleCard',
+  'TakeawayCard',
+  'DirectContent',
+];
 
-const DETAIL_LEVELS: DetailLevel[] = ['Executive', 'Standard', 'Detailed'];
+/** Map legacy stored level names to current ones (backward compat for IndexedDB data). */
+const LEGACY_LEVEL_MAP: Record<string, DetailLevel> = {
+  TitleCover: 'TitleCard',
+  TakeawayCover: 'TakeawayCard',
+};
 
 // ── File serialization ──
 
-export function serializeFile(f: UploadedFile): StoredFile {
+function _serializeFile(f: UploadedFile): StoredFile {
   return {
     id: f.id,
     name: f.name,
@@ -33,38 +64,39 @@ export function deserializeFile(sf: StoredFile, structure?: Heading[]): Uploaded
   };
 }
 
-// ── Heading serialization ──
+// ── Card serialization (runtime Card ↔ StoredHeading) ──
 
-export function serializeHeading(h: Heading, fileId: string): StoredHeading {
+export function serializeCard(card: Card, fileId: string): StoredHeading {
   return {
     fileId,
-    headingId: h.id,
-    level: h.level,
-    text: h.text,
-    selected: h.selected,
-    settings: h.settings,
-    synthesisMap: h.synthesisMap,
-    visualPlanMap: h.visualPlanMap,
-    lastGeneratedContentMap: h.lastGeneratedContentMap,
-    lastPromptMap: h.lastPromptMap,
-    createdAt: h.createdAt,
-    lastEditedAt: h.lastEditedAt,
-    sourceDocuments: h.sourceDocuments,
+    headingId: card.id,
+    level: card.level,
+    text: card.text,
+    selected: card.selected,
+    detailLevel: card.detailLevel,
+    settings: card.settings,
+    synthesisMap: card.synthesisMap,
+    visualPlanMap: card.visualPlanMap,
+    lastGeneratedContentMap: card.lastGeneratedContentMap,
+    lastPromptMap: card.lastPromptMap,
+    createdAt: card.createdAt,
+    lastEditedAt: card.lastEditedAt,
+    sourceDocuments: card.sourceDocuments,
     // Excluded: isSynthesizingMap, isGeneratingMap, startIndex, cardUrlMap, imageHistoryMap
   };
 }
 
-export function extractImages(h: Heading, fileId: string): StoredImage[] {
+export function extractImages(card: Card, fileId: string): StoredImage[] {
   const images: StoredImage[] = [];
   for (const level of DETAIL_LEVELS) {
-    const cardUrl = h.cardUrlMap?.[level];
+    const cardUrl = card.cardUrlMap?.[level];
     if (cardUrl) {
       images.push({
         fileId,
-        headingId: h.id,
+        headingId: card.id,
         level,
         cardUrl,
-        imageHistory: (h.imageHistoryMap?.[level] || []).map(v => ({
+        imageHistory: (card.imageHistoryMap?.[level] || []).map((v) => ({
           imageUrl: v.imageUrl,
           timestamp: v.timestamp,
           label: v.label,
@@ -75,17 +107,37 @@ export function extractImages(h: Heading, fileId: string): StoredImage[] {
   return images;
 }
 
-export function deserializeHeading(stored: StoredHeading, images: StoredImage[]): Heading {
-  const heading: Heading = {
+/** Migrate any legacy level keys inside a Partial<Record<DetailLevel, T>> map. */
+function migrateLevelMap<T>(map?: Partial<Record<string, T>>): Partial<Record<DetailLevel, T>> | undefined {
+  if (!map) return map as any;
+  const out: Partial<Record<string, T>> = {};
+  for (const [key, val] of Object.entries(map)) {
+    out[LEGACY_LEVEL_MAP[key] || key] = val;
+  }
+  return out as Partial<Record<DetailLevel, T>>;
+}
+
+export function deserializeCard(stored: StoredHeading, images: StoredImage[]): Card {
+  // Migrate legacy levelOfDetail in settings
+  const settings = stored.settings ? { ...stored.settings } : stored.settings;
+  if (settings?.levelOfDetail && LEGACY_LEVEL_MAP[settings.levelOfDetail as string]) {
+    settings.levelOfDetail = LEGACY_LEVEL_MAP[settings.levelOfDetail as string];
+  }
+
+  // Migrate detailLevel: prefer explicitly stored field, fall back to settings.levelOfDetail
+  const detailLevel = stored.detailLevel || (settings?.levelOfDetail ? settings.levelOfDetail : undefined);
+
+  const card: Card = {
     id: stored.headingId,
     level: stored.level,
     text: stored.text,
     selected: stored.selected,
-    settings: stored.settings,
-    synthesisMap: stored.synthesisMap,
-    visualPlanMap: stored.visualPlanMap,
-    lastGeneratedContentMap: stored.lastGeneratedContentMap,
-    lastPromptMap: stored.lastPromptMap,
+    detailLevel,
+    settings,
+    synthesisMap: migrateLevelMap(stored.synthesisMap),
+    visualPlanMap: migrateLevelMap(stored.visualPlanMap),
+    lastGeneratedContentMap: migrateLevelMap(stored.lastGeneratedContentMap),
+    lastPromptMap: migrateLevelMap(stored.lastPromptMap),
     isSynthesizingMap: {},
     isGeneratingMap: {},
     createdAt: stored.createdAt,
@@ -93,26 +145,27 @@ export function deserializeHeading(stored: StoredHeading, images: StoredImage[])
     sourceDocuments: stored.sourceDocuments,
   };
 
-  // Merge image data back into heading
-  const matchingImages = images.filter(img => img.headingId === stored.headingId);
+  // Merge image data back into card
+  const matchingImages = images.filter((img) => img.headingId === stored.headingId);
   if (matchingImages.length > 0) {
     const cardUrlMap: Partial<Record<DetailLevel, string>> = {};
     const imageHistoryMap: Partial<Record<DetailLevel, ImageVersion[]>> = {};
 
     for (const img of matchingImages) {
-      cardUrlMap[img.level] = img.cardUrl;
+      const lvl = (LEGACY_LEVEL_MAP[img.level as string] || img.level) as DetailLevel;
+      cardUrlMap[lvl] = img.cardUrl;
       if (img.imageHistory?.length > 0) {
-        imageHistoryMap[img.level] = img.imageHistory;
+        imageHistoryMap[lvl] = img.imageHistory;
       }
     }
 
-    heading.cardUrlMap = cardUrlMap;
+    card.cardUrlMap = cardUrlMap;
     if (Object.keys(imageHistoryMap).length > 0) {
-      heading.imageHistoryMap = imageHistoryMap;
+      card.imageHistoryMap = imageHistoryMap;
     }
   }
 
-  return heading;
+  return card;
 }
 
 // ── Insights serialization ──
@@ -131,9 +184,9 @@ export function serializeInsightsSession(session: InsightsSession): {
   const images: StoredImage[] = [];
   const insightsFileId = '__insights__';
 
-  for (const h of session.headings) {
-    headings.push(serializeHeading(h, insightsFileId));
-    images.push(...extractImages(h, insightsFileId));
+  for (const card of session.cards) {
+    headings.push(serializeCard(card, insightsFileId));
+    images.push(...extractImages(card, insightsFileId));
   }
 
   return { session: storedSession, headings, images };
@@ -149,21 +202,25 @@ export function serializeNugget(n: Nugget): StoredNugget {
     messages: n.messages,
     docChangeLog: n.docChangeLog,
     lastDocChangeSyncIndex: n.lastDocChangeSyncIndex,
+    subject: n.subject,
+    stylingOptions: n.stylingOptions,
     createdAt: n.createdAt,
     lastModifiedAt: n.lastModifiedAt,
   };
 }
 
-export function deserializeNugget(sn: StoredNugget, headings: Heading[], documents: UploadedFile[]): Nugget {
+export function deserializeNugget(sn: StoredNugget, cards: Card[], documents: UploadedFile[]): Nugget {
   return {
     id: sn.id,
     name: sn.name,
     type: sn.type as 'insights',
     documents,
-    headings,
+    cards,
     messages: sn.messages,
     docChangeLog: sn.docChangeLog,
     lastDocChangeSyncIndex: sn.lastDocChangeSyncIndex,
+    subject: sn.subject,
+    stylingOptions: sn.stylingOptions,
     createdAt: sn.createdAt,
     lastModifiedAt: sn.lastModifiedAt,
   };
@@ -172,7 +229,7 @@ export function deserializeNugget(sn: StoredNugget, headings: Heading[], documen
 // ── Nugget document serialization ──
 
 export function serializeNuggetDocument(nuggetId: string, doc: UploadedFile): StoredNuggetDocument {
-  return {
+  const stored: StoredNuggetDocument = {
     nuggetId,
     docId: doc.id,
     name: doc.name,
@@ -183,10 +240,30 @@ export function serializeNuggetDocument(nuggetId: string, doc: UploadedFile): St
     status: doc.status === 'ready' ? 'ready' : 'error',
     progress: doc.status === 'ready' ? 100 : 0,
   };
+
+  // Persist native PDF fields
+  if (doc.sourceType) stored.sourceType = doc.sourceType;
+  if (doc.pdfBase64) stored.pdfBase64 = doc.pdfBase64;
+  if (doc.fileId) stored.fileId = doc.fileId;
+  if (doc.structure) stored.structure = doc.structure;
+  if (doc.tocSource) stored.tocSource = doc.tocSource;
+  if (doc.originalFormat) stored.originalFormat = doc.originalFormat;
+  if (doc.createdAt) stored.createdAt = doc.createdAt;
+  if (doc.lastEditedAt) stored.lastEditedAt = doc.lastEditedAt;
+  if (doc.lastRenamedAt) stored.lastRenamedAt = doc.lastRenamedAt;
+  if (doc.originalName) stored.originalName = doc.originalName;
+  if (doc.sourceOrigin) stored.sourceOrigin = doc.sourceOrigin;
+  if (doc.version) stored.version = doc.version;
+  if (doc.lastEnabledAt) stored.lastEnabledAt = doc.lastEnabledAt;
+  if (doc.lastDisabledAt) stored.lastDisabledAt = doc.lastDisabledAt;
+  if (doc.bookmarks) stored.bookmarks = doc.bookmarks;
+  if (doc.bookmarkSource) stored.bookmarkSource = doc.bookmarkSource;
+
+  return stored;
 }
 
 export function deserializeNuggetDocument(stored: StoredNuggetDocument): UploadedFile {
-  return {
+  const doc: UploadedFile = {
     id: stored.docId,
     name: stored.name,
     size: stored.size,
@@ -196,6 +273,40 @@ export function deserializeNuggetDocument(stored: StoredNuggetDocument): Uploade
     status: stored.status,
     progress: stored.progress,
   };
+
+  // Restore native PDF fields
+  if (stored.sourceType) doc.sourceType = stored.sourceType;
+  if (stored.pdfBase64) doc.pdfBase64 = stored.pdfBase64;
+  if (stored.fileId) doc.fileId = stored.fileId;
+  if (stored.structure) doc.structure = stored.structure;
+  if (stored.tocSource) doc.tocSource = stored.tocSource;
+  if (stored.originalFormat) doc.originalFormat = stored.originalFormat;
+  if (stored.createdAt) doc.createdAt = stored.createdAt;
+  if (stored.lastEditedAt) doc.lastEditedAt = stored.lastEditedAt;
+  if (stored.lastRenamedAt) doc.lastRenamedAt = stored.lastRenamedAt;
+  if (stored.originalName) doc.originalName = stored.originalName;
+  if (stored.sourceOrigin) doc.sourceOrigin = stored.sourceOrigin;
+  if (stored.version) doc.version = stored.version;
+  if (stored.lastEnabledAt) doc.lastEnabledAt = stored.lastEnabledAt;
+  if (stored.lastDisabledAt) doc.lastDisabledAt = stored.lastDisabledAt;
+
+  // Restore bookmarks, or migrate from flat structure if absent
+  if (stored.bookmarks) {
+    doc.bookmarks = stored.bookmarks as BookmarkNode[];
+    doc.bookmarkSource = stored.bookmarkSource;
+  } else if (stored.sourceType === 'native-pdf' && stored.structure?.length) {
+    // Auto-migrate: convert existing flat headings to nested bookmarks
+    const migratedHeadings: Heading[] = stored.structure.map((h) => ({
+      level: h.level,
+      text: h.text,
+      id: h.id,
+      page: h.page,
+    }));
+    doc.bookmarks = headingsToBookmarks(migratedHeadings);
+    doc.bookmarkSource = 'manual';
+  }
+
+  return doc;
 }
 
 // ── Project serialization ──

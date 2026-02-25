@@ -1,4 +1,5 @@
-import { DetailLevel } from '../../types';
+import { DetailLevel, UploadedFile, isCoverLevel } from '../../types';
+import { buildExpertPriming } from './promptUtils';
 
 // ─────────────────────────────────────────────────────────────────
 // Card Content Generation
@@ -9,44 +10,77 @@ import { DetailLevel } from '../../types';
 // ─────────────────────────────────────────────────────────────────
 
 export function buildContentPrompt(
-  headingText: string,
+  cardTitle: string,
   level: DetailLevel,
   fullDocument: string,
   sectionText: string,
-  excludeDocument = false
+  excludeDocument = false,
+  subject?: string,
 ): string {
+  if (isCoverLevel(level)) {
+    throw new Error(`Use buildCoverContentPrompt for card cover levels (got '${level}')`);
+  }
+
   let wordCountRange = '200-250';
-  if (level === 'Executive') wordCountRange = '70-100';
-  if (level === 'Detailed') wordCountRange = '450-500';
+  let scopeGuidance = '';
+  let formattingGuidance = '';
 
-  const instructions = `
-Content Generation — [${headingText}]
-Read the provided document in full for context. Then focus on [${headingText}] including all its sub-sections and nested content.
-
-**Task:**
-Extract and restructure the section's content into infographic-ready text that is ${wordCountRange} WORDS. The text must preserves all key data, arguments, and relationships between parts. The output should make the section's hierarchy, logic, and connections between its parts immediately clear without referring back to the source.
-
-**Requirements:**
-- Reproduce all meaningful content — no omissions, no invented information
-- Make explicit any relationships that are implied in the original (cause-effect, sequence, hierarchy, comparison, part-to-whole)
-- Use concise, direct phrasing — no filler, no repetition
-- Preserve all data points, statistics, and specific terms exactly as written
-- Only number headings when the content has inherent sequential order (steps, phases, stages, ranked items). For thematic, categorical, or parallel content use descriptive headings without numbers
-
-**Formatting (use full markdown range):**
+  if (level === 'Executive') {
+    wordCountRange = '70-100';
+    scopeGuidance = `**Scope:** This is an EXECUTIVE SUMMARY. Prioritize ruthlessly — include only the single most important insight, conclusion, or finding. Omit supporting details, examples, breakdowns, and secondary points. Think: what would a CEO need to see in a 10-second glance?`;
+    formattingGuidance = `**Formatting (strict for Executive):**
+- Use bold for 1-2 key metrics or terms only
+- Maximum one ## heading below the title
+- No tables, no ###, no blockquotes
+- Prefer a tight paragraph or 2-3 bullets — nothing more`;
+  } else if (level === 'Detailed') {
+    wordCountRange = '450-500';
+    scopeGuidance = `**Scope:** This is a DETAILED analysis. Include comprehensive data, supporting evidence, comparisons, and relationships. Cover all relevant dimensions of the topic.`;
+    formattingGuidance = `**Formatting (use full markdown range):**
 - Use bullet points for lists of features, attributes, or non-sequential items
 - Use numbered lists for sequential steps, ranked items, or ordered processes
 - Use tables when comparing items across multiple dimensions or presenting structured data
 - Use bold for key terms, metrics, and important phrases
 - Use blockquotes for notable quotes or callout statements
-- Choose the format that best represents the data — do NOT flatten everything into plain paragraphs
+- Choose the format that best represents the data — do NOT flatten everything into plain paragraphs`;
+  } else {
+    scopeGuidance = `**Scope:** This is a STANDARD summary. Cover the key points, important data, and primary relationships. Include enough detail to be informative but stay concise.`;
+    formattingGuidance = `**Formatting (use full markdown range):**
+- Use bullet points for lists of features, attributes, or non-sequential items
+- Use numbered lists for sequential steps, ranked items, or ordered processes
+- Use tables only when comparing 3+ items across multiple dimensions
+- Use bold for key terms, metrics, and important phrases
+- Choose the format that best represents the data — do NOT flatten everything into plain paragraphs`;
+  }
+
+  const expertPriming = buildExpertPriming(subject);
+  const instructions = `${expertPriming ? expertPriming + '\n\n' : ''}Content Generation — [${cardTitle}]
+Read the provided document in full for context. Then focus on [${cardTitle}] including all its sub-sections and nested content.
+
+**WORD COUNT: EXACTLY ${wordCountRange} words. This is a hard limit. Count your output words before responding. If over, cut. If under, you may add — but NEVER exceed the upper bound.**
+
+${scopeGuidance}
+
+**Task:**
+Extract and restructure the section's content into infographic-ready text within the word limit. The output should make the section's hierarchy, logic, and connections between its parts immediately clear without referring back to the source.
+
+**Requirements:**
+- Make explicit any relationships that are implied in the original (cause-effect, sequence, hierarchy, comparison, part-to-whole)
+- Use concise, direct phrasing — no filler, no repetition
+- Preserve key data points, statistics, and specific terms exactly as written
+- Do not invent information not present in the documents
+- Only number headings when the content has inherent sequential order (steps, phases, stages, ranked items). For thematic, categorical, or parallel content use descriptive headings without numbers
+
+${formattingGuidance}
 
 **Heading Hierarchy (strict):**
 - Do NOT include the section title as a heading — it will be added separately
 - Use ## for main sections within the content
-- Use ### for subsections under those
+- Use ### for subsections under those (if word count permits)
 - Never skip heading levels (e.g., no jumping from ## to ####)
 - Never use # (H1) — that level is reserved for the section title
+
+**Output:** Return ONLY the card content. No preamble, no explanation. REMINDER: ${wordCountRange} words maximum.
 `.trim();
 
   if (excludeDocument) {
@@ -56,106 +90,162 @@ Extract and restructure the section's content into infographic-ready text that i
 }
 
 // ─────────────────────────────────────────────────────────────────
-// Planner (Visual Layout Description)
+// Planner (Creative Visual Brief)
 // ─────────────────────────────────────────────────────────────────
 // Phase 3 — consumed by Gemini Flash (text LLM).
 //
-// This prompt uses XML+MD structure (optimal for text LLMs).
-// What changed from the original (per S4):
-//   - Added canvas constraints (aspect ratio + content word count)
-//   - Section 5: narrative description, no color mentions
-//   - Section 6: tier labels only, narrative format (no font names,
-//     no point sizes) — because this output gets injected into
-//     the image model's prompt downstream
-//   - Added FORBIDDEN rule to prevent toxic payload generation
-//   - Removed fonts parameter (no longer needed)
+// Produces a conceptual creative brief — NOT a rigid wireframe.
+// Focuses on data relationships, visual concept, groupings, and
+// focal hierarchy. Leaves spatial placement and style decisions
+// to the image model (renderer), which receives the style identity,
+// palette, and fonts separately.
 // ─────────────────────────────────────────────────────────────────
 
 export function buildPlannerPrompt(
-  headingText: string,
+  cardTitle: string,
   synthesisContent: string,
-  style: string,
-  aspectRatio: string = '16:9'
+  aspectRatio: string = '16:9',
+  previousPlan?: string,
+  subject?: string,
 ): string {
-  // Compute approximate word count from the synthesis content
-  const wordCount = synthesisContent.split(/\s+/).filter(w => w.length > 0).length;
+  const wordCount = synthesisContent.split(/\s+/).filter((w) => w.length > 0).length;
 
-  // Derive canvas orientation description from aspect ratio
   let canvasDescription = 'landscape — wider than tall';
   if (aspectRatio === '9:16') canvasDescription = 'portrait — taller than wide';
   else if (aspectRatio === '1:1') canvasDescription = 'square — equal width and height';
-  else if (aspectRatio === '4:5') canvasDescription = 'near-square portrait';
+  else if (aspectRatio === '4:5' || aspectRatio === '3:4' || aspectRatio === '2:3')
+    canvasDescription = 'portrait — taller than wide';
+  else if (aspectRatio === '5:4' || aspectRatio === '3:2') canvasDescription = 'near-square landscape';
+
+  // Build diversity clause when regenerating
+  let diversityClause = '';
+  if (previousPlan) {
+    diversityClause = `
+## PREVIOUS CONCEPT (DO NOT REPEAT):
+The following visual concept was already used for this content. You MUST propose a fundamentally different visualization approach — different visual metaphor, different diagram type, different information structure. Do not reuse the same concept with minor variations.
+---
+${previousPlan.slice(0, 600)}
+---
+`;
+  }
+
+  const domainContext = subject
+    ? `\n## DOMAIN CONTEXT:\nThis content belongs to the domain of "${subject}". Use domain-appropriate visual metaphors, diagram types, and iconography conventions when proposing the visualization concept.\n`
+    : '';
 
   return `
-# VISUAL LAYOUT PLANNING — [${headingText}]
+# CREATIVE VISUAL BRIEF — [${cardTitle}]
 
-You are an expert information designer. Your job is STRICTLY to decide HOW content should be visually arranged — layout, spacing, hierarchy, and composition. You do NOT decide WHAT content appears. The content is final and complete. You must not rewrite, paraphrase, summarize, abbreviate, or omit any of it.
-
-## CANVAS CONSTRAINTS:
+You are an expert information designer creating a creative brief for an infographic. Your job is to analyze the content and describe the BEST way to visualize its underlying relationships — not to produce a rigid wireframe. Let the content's own logic suggest the visual form.
+${domainContext}
+## CANVAS:
 - Aspect ratio: ${aspectRatio} (${canvasDescription})
-- Approximate content density: ~${wordCount} words
-- Fit your layout to this canvas shape without crowding or wasted space
-
-## CONTENT TO VISUALIZE:
+- Content density: ~${wordCount} words
+${diversityClause}
+## CONTENT:
 ---
 ${synthesisContent}
 ---
 
+## VISUAL VOCABULARY:
+Choose freely from the full range of infographic elements — pick whichever best represents the content:
+
+Charts: column, bar, stacked bar, grouped bar, line, area, pie, donut, gauge, radar/spider, scatter plot, bubble, waterfall, funnel, treemap, heatmap, sparklines, pictorial/icon charts, waffle charts, bullet charts, slope charts
+
+Diagrams: hierarchy/org chart, tree, flowchart, process flow, cycle, Venn, Euler, swimlane, Sankey, mind map, network/node graph, decision tree, concept map, fishbone/Ishikawa, SWOT matrix, quadrant/2x2 matrix, pyramid, staircase/step, concentric rings, timeline, Gantt, roadmap, journey map, comparison table, scorecard/dashboard panel
+
+Visual elements: callout badges, stat counters, icon arrays, progress bars, checklists, annotated illustrations, pull quotes, KPI tiles, before/after splits, geographical maps, rating scales, milestone markers
+
 ## YOUR TASK:
-Analyze the content's structure (hierarchy, relationships, flow, comparisons, groupings) and produce a spatial layout blueprint. You are writing a construction plan for a graphic designer — not editing the content.
+Analyze the content and write a short creative brief (roughly 150–250 words total) covering these four areas. Write in narrative prose, not bullet lists.
 
-## CRITICAL RULE:
-**DO NOT REWRITE THE CONTENT.** Reference content items by their existing headings, labels, or bullet text. Every word, number, statistic, and label from the content above will be passed verbatim to the renderer. Your job is only to say WHERE and HOW each piece is placed visually.
+**1. DATA RELATIONSHIPS**
+What is the underlying structure of this content? Identify the dominant pattern: Is it a hierarchy? A sequence? A comparison? A concept with supporting details? A chronology? Overlapping categories? A set of metrics? A definition with attributes? Name the pattern and explain why it fits.
 
-## OUTPUT FORMAT:
+**2. VISUAL CONCEPT**
+Propose the best infographic visualization for this content by selecting from the visual vocabulary above. You may combine multiple element types (e.g. a process flow with embedded stat counters, or a hierarchy diagram with callout badges). Describe the concept in one or two sentences — focus on what makes the information intuitive.
 
-Write all descriptions as narrative sentences, not key-value lists.
+**3. CONTENT GROUPINGS**
+Which pieces of content belong together logically? Describe natural clusters. Note which items are standalone key figures or callouts that should be visually prominent (e.g. statistics, monetary values, percentages).
 
-1. **LAYOUT TYPE**: Choose the most effective spatial arrangement:
-   - Top-down flowchart (sequential processes, pipelines, cause-effect)
-   - Radial/hub-spoke (central concept with satellites)
-   - Grid/matrix (comparisons, feature tables, multi-dimensional data)
-   - Left-to-right timeline (chronological or phase-based)
-   - Nested hierarchy (part-to-whole, org charts, taxonomies)
-   - Split/column layout (before/after, pros/cons, dual perspectives)
-   - Layered/stacked (architecture diagrams, protocol stacks)
-
-2. **COMPONENT INVENTORY**: Describe the visual containers and their roles in narrative form:
-   - Boxes/cards: which content section each contains, relative size and grouping
-   - Connectors/arrows: what connects to what, direction
-   - Icons: describe purpose (e.g. "database icon", "user icon") — not specific icon names
-   - Section dividers: where the content naturally breaks
-   - Callout badges: which existing statistics or key numbers to emphasize
-
-3. **SPATIAL ARRANGEMENT**: Describe precise placement in narrative form:
-   - What goes top, center, bottom
-   - What groups together vs. separates
-   - Flow direction (left→right, top→down, etc.)
-   - Relative sizing (which components are visually dominant)
-
-4. **EMPHASIS & HIERARCHY**: Describe what stands out visually:
-   - Primary focal point (largest, most prominent)
-   - Secondary elements
-   - Supporting details (smaller, peripheral)
-
-5. **STYLE NOTES**: Describe how the [${style}] aesthetic applies:
-   - Shape character (rounded, sharp, organic, geometric)
-   - Line weight and connector style
-   - Icon treatment (outlined, filled, decorative)
-   - Background treatment (solid, gradient, textured)
-   - Write in narrative sentences. The renderer handles all color decisions — do not mention any colors.
-
-6. **TEXT HIERARCHY**: Describe which text elements are most prominent and where they sit visually. Use ONLY these tier labels: TIER-1 (title), TIER-2 (headers), TIER-3 (body), TIER-4 (callouts). Write in narrative sentences, not lists.
-
-   Example: "The title sits in a bold TIER-1 banner across the top. Each column is headed by a TIER-2 label. Bullet details are TIER-3. The $42M figure is a TIER-4 callout badge."
+**4. FOCAL HIERARCHY**
+What should grab the viewer's attention first, second, and third? Describe this as a viewing sequence, not positions. Reference content by its existing headings or labels.
 
 ## RULES:
-- Write all descriptions as narrative sentences, not key-value lists
-- Be EXPLICIT about spatial positions — "top-left", "center row", "bottom strip"
+- Do NOT dictate exact positions (no "top-left", "right column", "bottom strip")
+- Do NOT prescribe container types (no "a card containing...", "a sidebar with...")
+- Do NOT mention colors, fonts, point sizes, or pixel values
+- Do NOT rewrite, paraphrase, or abbreviate any content text
 - Reference ALL content items — nothing may be dropped
-- Do NOT rewrite, paraphrase, or summarize any content text
-- Do NOT invent information not in the content
-- Keep layout descriptions concise but unambiguous
-- FORBIDDEN in your output: font names, point sizes, hex colors, pixel values, key-value pairs. Use tier labels and spatial descriptions only. The renderer handles all font, color, and size decisions.
+- Keep it concise — this is a brief, not a specification
 `.trim();
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Native PDF Section Hint
+// ─────────────────────────────────────────────────────────────────
+// When generating card content from a native (unconverted) PDF,
+// there is no markdown to regex-extract sections from. Instead,
+// we build a prompt hint that tells Claude the section name, its
+// page boundaries, and its sub-section structure so it can locate
+// and extract the right content from the full PDF.
+// ─────────────────────────────────────────────────────────────────
+
+/**
+ * Build a prompt hint that tells Claude where to find a specific section
+ * in a native PDF document, using heading names and page boundaries.
+ *
+ * @param cardTitle — The heading text the user right-clicked on
+ * @param enabledDocs — All enabled documents in the nugget
+ * @returns A prompt string to append, or '' if no match found
+ */
+export function buildNativePdfSectionHint(cardTitle: string, enabledDocs: UploadedFile[]): string {
+  for (const doc of enabledDocs) {
+    if (!doc.structure?.length) continue;
+    const headingIdx = doc.structure.findIndex((h) => h.text === cardTitle);
+    if (headingIdx === -1) continue;
+
+    const targetHeading = doc.structure[headingIdx];
+
+    // Find the next sibling or higher-level heading (= section end boundary)
+    let nextSiblingIdx = -1;
+    for (let i = headingIdx + 1; i < doc.structure.length; i++) {
+      if (doc.structure[i].level <= targetHeading.level) {
+        nextSiblingIdx = i;
+        break;
+      }
+    }
+
+    // Collect descendant headings within this section
+    const sectionHeadings = [targetHeading];
+    for (let i = headingIdx + 1; i < doc.structure.length; i++) {
+      if (doc.structure[i].level <= targetHeading.level) break;
+      sectionHeadings.push(doc.structure[i]);
+    }
+
+    // Build page boundary info
+    const startPage = targetHeading.page;
+    const endPage = nextSiblingIdx !== -1 ? doc.structure[nextSiblingIdx].page : undefined;
+
+    // Build the TOC lines with page numbers
+    const tocLines = sectionHeadings
+      .map((h) => {
+        const indent = '  '.repeat(h.level - 1);
+        const pageLabel = h.page != null ? ` (page ${h.page})` : '';
+        return `${indent}- ${h.text}${pageLabel}`;
+      })
+      .join('\n');
+
+    // Build page range instruction
+    let pageInstruction = '';
+    if (startPage != null && endPage != null) {
+      const lastContentPage = endPage > startPage ? endPage - 1 : endPage;
+      pageInstruction = `\n\nPAGE BOUNDARIES: This section starts on page ${startPage} and the next section "${doc.structure[nextSiblingIdx].text}" starts on page ${endPage}. Extract content ONLY from pages ${startPage}–${lastContentPage}.`;
+    } else if (startPage != null) {
+      pageInstruction = `\n\nPAGE BOUNDARY: This section starts on page ${startPage} and continues to the end of the document. Extract content from page ${startPage} onwards.`;
+    }
+
+    return `\n\nDOCUMENT SECTION STRUCTURE (from "${doc.name}"):\nThe target section "${cardTitle}" contains these sub-sections:\n${tocLines}${pageInstruction}\n\nExtract content from this entire section including all sub-sections listed above.`;
+  }
+  return '';
 }

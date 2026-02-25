@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react';
-import { Annotation, NormalizedPoint } from '../types';
+import { Annotation } from '../types';
 
-export interface UseAnnotationsReturn {
+interface UseAnnotationsReturn {
   annotations: Annotation[];
   selectedAnnotationId: string | null;
   add: (annotation: Annotation) => void;
@@ -21,19 +21,17 @@ export function useAnnotations(): UseAnnotationsReturn {
   const [selectedAnnotationId, setSelectedAnnotationId] = useState<string | null>(null);
 
   const add = useCallback((annotation: Annotation) => {
-    setAnnotations(prev => [...prev, annotation]);
+    setAnnotations((prev) => [...prev, annotation]);
     setSelectedAnnotationId(annotation.id);
   }, []);
 
   const update = useCallback((id: string, partial: Partial<Annotation>) => {
-    setAnnotations(prev =>
-      prev.map(a => a.id === id ? { ...a, ...partial } as Annotation : a)
-    );
+    setAnnotations((prev) => prev.map((a) => (a.id === id ? ({ ...a, ...partial } as Annotation) : a)));
   }, []);
 
   const remove = useCallback((id: string) => {
-    setAnnotations(prev => prev.filter(a => a.id !== id));
-    setSelectedAnnotationId(prev => prev === id ? null : prev);
+    setAnnotations((prev) => prev.filter((a) => a.id !== id));
+    setSelectedAnnotationId((prev) => (prev === id ? null : prev));
   }, []);
 
   const select = useCallback((id: string | null) => {
@@ -46,8 +44,8 @@ export function useAnnotations(): UseAnnotationsReturn {
   }, []);
 
   const moveAnnotation = useCallback((id: string, dx: number, dy: number) => {
-    setAnnotations(prev =>
-      prev.map(a => {
+    setAnnotations((prev) =>
+      prev.map((a) => {
         if (a.id !== id) return a;
         const clamp = (v: number) => Math.max(0, Math.min(1, v));
         switch (a.type) {
@@ -66,11 +64,11 @@ export function useAnnotations(): UseAnnotationsReturn {
               end: { x: clamp(a.end.x + dx), y: clamp(a.end.y + dy) },
             };
           case 'sketch':
-            return { ...a, points: a.points.map(p => ({ x: clamp(p.x + dx), y: clamp(p.y + dy) })) };
+            return { ...a, points: a.points.map((p) => ({ x: clamp(p.x + dx), y: clamp(p.y + dy) })) };
           default:
             return a;
         }
-      })
+      }),
     );
   }, []);
 

@@ -1,25 +1,24 @@
-import { GoogleGenAI } from '@google/genai';
-import { withRetry, PRO_IMAGE_CONFIG } from './ai';
+import { withGeminiRetry, PRO_IMAGE_CONFIG, getGeminiAI } from './ai';
 import { buildModificationPrompt, buildContentModificationPrompt } from './prompts/imageGeneration';
 
-export interface ModificationRequest {
-  originalImageUrl: string;   // data URL of the original image
-  redlineDataUrl: string;     // data URL of the redline overlay (empty string if no spatial annotations)
-  instructions: string;       // synthesized numbered instruction list
-  headingText: string | null; // heading context for the prompt
-  aspectRatio?: string;       // e.g. '16:9', '4:3', '1:1', '3:4'
-  resolution?: string;        // e.g. '1K', '2K', '4K'
+interface ModificationRequest {
+  originalImageUrl: string; // data URL of the original image
+  redlineDataUrl: string; // data URL of the redline overlay (empty string if no spatial annotations)
+  instructions: string; // synthesized numbered instruction list
+  cardText: string | null; // card title context for the prompt
+  aspectRatio?: string; // e.g. '16:9', '4:3', '1:1', '3:4'
+  resolution?: string; // e.g. '1K', '2K', '4K'
 }
 
-export interface ModificationResult {
-  newImageUrl: string;  // data URL of the modified image
+interface ModificationResult {
+  newImageUrl: string; // data URL of the modified image
 }
 
 // TODO: Implement multi-turn chat for iterative image editing.
 // Gemini docs say multi-turn chat is "the recommended way to iterate on images."
 // The @google/genai SDK's ai.chats.create() handles thought signature circulation
 // automatically. Implementation would require:
-// 1. Maintaining a chat session per heading+level (store in Heading type)
+// 1. Maintaining a chat session per card+level (store in Card type)
 // 2. Initial card generation becomes the first turn
 // 3. Each annotation modification becomes a follow-up turn (no need to re-send full image)
 // 4. Clear chat session when generating a new card from scratch
@@ -38,18 +37,17 @@ export interface ModificationResult {
  * Returns the modified image as a data URL.
  */
 export async function executeModification(
-  request: ModificationRequest
+  request: ModificationRequest,
+  onUsage?: (entry: { provider: 'gemini'; model: string; inputTokens: number; outputTokens: number }) => void,
 ): Promise<ModificationResult> {
-  const { originalImageUrl, redlineDataUrl, instructions, headingText, aspectRatio, resolution } = request;
-
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  const { originalImageUrl, redlineDataUrl, instructions, cardText, aspectRatio, resolution } = request;
 
   // Extract base64 data from data URLs
   const originalBase64 = extractBase64(originalImageUrl);
   const originalMime = extractMime(originalImageUrl);
   const hasRedline = !!redlineDataUrl;
 
-  const systemPrompt = buildModificationPrompt(instructions, headingText, hasRedline);
+  const systemPrompt = buildModificationPrompt(instructions, cardText, hasRedline);
 
   // Build imageConfig to preserve resolution & aspect ratio from original generation
   const imageConfig: Record<string, string> = {};
@@ -78,7 +76,8 @@ export async function executeModification(
     });
   }
 
-  const response = await withRetry(async () => {
+  const response = await withGeminiRetry(async () => {
+    const ai = await getGeminiAI();
     return await ai.models.generateContent({
       model: 'gemini-3-pro-image-preview',
       contents: [
@@ -93,6 +92,16 @@ export async function executeModification(
     });
   });
 
+  // Record Gemini usage
+  if (response.usageMetadata) {
+    onUsage?.({
+      provider: 'gemini',
+      model: 'gemini-3-pro-image-preview',
+      inputTokens: response.usageMetadata.promptTokenCount ?? 0,
+      outputTokens: response.usageMetadata.candidatesTokenCount ?? 0,
+    });
+  }
+
   // Extract the modified image from the response
   let newImageUrl = '';
   if (response.candidates && response.candidates[0]?.content?.parts) {
@@ -105,7 +114,9 @@ export async function executeModification(
   }
 
   if (!newImageUrl) {
-    throw new Error('AI did not return a modified image. The model may have returned text instead of an image. Please try again with clearer instructions.');
+    throw new Error(
+      'AI did not return a modified image. The model may have returned text instead of an image. Please try again with clearer instructions.',
+    );
   }
 
   return { newImageUrl };
@@ -116,10 +127,10 @@ export async function executeModification(
  * alongside updated text content. No redline map — the AI re-renders the infographic
  * with the new content while preserving the visual style of the reference image.
  */
-export interface ContentModificationRequest {
-  originalImageUrl: string;   // reference image for style continuity
-  content: string;            // the updated synthesis content
-  headingText: string | null;
+interface ContentModificationRequest {
+  originalImageUrl: string; // reference image for style continuity
+  content: string; // the updated synthesis content
+  cardText: string | null;
   style?: string;
   palette?: { background: string; primary: string; secondary: string; accent: string; text: string };
   aspectRatio?: string;
@@ -127,22 +138,22 @@ export interface ContentModificationRequest {
 }
 
 export async function executeContentModification(
-  request: ContentModificationRequest
+  request: ContentModificationRequest,
+  onUsage?: (entry: { provider: 'gemini'; model: string; inputTokens: number; outputTokens: number }) => void,
 ): Promise<ModificationResult> {
-  const { originalImageUrl, content, headingText, style, palette, aspectRatio, resolution } = request;
-
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  const { originalImageUrl, content, cardText, style, palette, aspectRatio, resolution } = request;
 
   const originalBase64 = extractBase64(originalImageUrl);
   const originalMime = extractMime(originalImageUrl);
 
-  const systemPrompt = buildContentModificationPrompt(content, headingText, style, palette);
+  const systemPrompt = buildContentModificationPrompt(content, cardText, style, palette);
 
   const imageConfig: Record<string, string> = {};
   if (aspectRatio) imageConfig.aspectRatio = aspectRatio;
   if (resolution) imageConfig.imageSize = resolution;
 
-  const response = await withRetry(async () => {
+  const response = await withGeminiRetry(async () => {
+    const ai = await getGeminiAI();
     return await ai.models.generateContent({
       model: 'gemini-3-pro-image-preview',
       contents: [
@@ -164,6 +175,16 @@ export async function executeContentModification(
       },
     });
   });
+
+  // Record Gemini usage
+  if (response.usageMetadata) {
+    onUsage?.({
+      provider: 'gemini',
+      model: 'gemini-3-pro-image-preview',
+      inputTokens: response.usageMetadata.promptTokenCount ?? 0,
+      outputTokens: response.usageMetadata.candidatesTokenCount ?? 0,
+    });
+  }
 
   let newImageUrl = '';
   if (response.candidates && response.candidates[0]?.content?.parts) {

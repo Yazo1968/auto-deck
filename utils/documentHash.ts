@@ -7,14 +7,12 @@ import type { UploadedFile } from '../types';
  */
 export function computeDocumentHash(documents: UploadedFile[]): string {
   const activeDocs = documents
-    .filter(doc => doc.content && doc.enabled !== false)
+    .filter((doc) => (doc.content || doc.fileId) && doc.enabled !== false)
     .sort((a, b) => a.id.localeCompare(b.id));
 
   if (activeDocs.length === 0) return '0';
 
-  const payload = activeDocs
-    .map(doc => `${doc.id}:${doc.name}:${doc.content}`)
-    .join('|');
+  const payload = activeDocs.map((doc) => `${doc.id}:${doc.name}:${doc.content || doc.fileId || ''}`).join('|');
 
   // djb2 hash — simple, fast, good distribution
   let hash = 5381;

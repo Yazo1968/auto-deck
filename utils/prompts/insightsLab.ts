@@ -1,4 +1,5 @@
-import { DetailLevel } from '../../types';
+import { DetailLevel, isCoverLevel } from '../../types';
+import { buildExpertPriming } from './promptUtils';
 
 // ─────────────────────────────────────────────────────────────────
 // Insights Lab — System Prompt & Card Content Instructions
@@ -7,7 +8,16 @@ import { DetailLevel } from '../../types';
 // and structured card content generation via Claude.
 // ─────────────────────────────────────────────────────────────────
 
-export const INSIGHTS_SYSTEM_PROMPT = `You are an expert document analyst and content strategist. The user has uploaded one or more documents for you to analyze. You have access to the full content of these documents.
+/** @deprecated Use buildInsightsSystemPrompt(subject?) instead */
+const _INSIGHTS_SYSTEM_PROMPT = buildInsightsSystemPrompt();
+
+export function buildInsightsSystemPrompt(subject?: string): string {
+  const expertPriming = buildExpertPriming(subject);
+  const roleStatement = expertPriming
+    ? `${expertPriming} You also serve as an expert document analyst and content strategist.`
+    : 'You are an expert document analyst and content strategist.';
+
+  return `${roleStatement} The user has uploaded one or more documents for you to analyze. You have access to the full content of these documents.
 
 **Your role:**
 - Answer questions about the documents accurately and thoroughly
@@ -45,8 +55,13 @@ Make a card highlighting the statistics and data points
 \`\`\`
 
 Each suggestion should be a concise, actionable prompt (under 15 words) that would produce good card content. Tailor suggestions to the specific conversation context — reference actual topics, themes, or data from the documents being discussed. Do NOT include this block in card content generation responses.`;
+}
 
 export function buildCardContentInstruction(detailLevel: DetailLevel): string {
+  if (isCoverLevel(detailLevel)) {
+    throw new Error(`Use buildCoverContentInstruction for card cover levels (got '${detailLevel}')`);
+  }
+
   let wordCountRange = '200-250';
   let scopeGuidance = '';
   let formattingGuidance = '';
@@ -79,6 +94,8 @@ export function buildCardContentInstruction(detailLevel: DetailLevel): string {
   return `
 CARD CONTENT GENERATION MODE — THIS OVERRIDES ALL OTHER INSTRUCTIONS.
 
+CRITICAL: Your response MUST begin with a single # heading as the card title. This is mandatory — every card needs a title. The heading should be concise and descriptive (2-8 words). Never omit the # title heading.
+
 WORD COUNT: EXACTLY ${wordCountRange} words. This is a hard limit. Count your output words before responding. If over, cut. If under, you may add — but NEVER exceed the upper bound. The # title heading does NOT count toward the word limit.
 
 **Scope:** ${scopeGuidance}
@@ -104,7 +121,7 @@ WORD COUNT: EXACTLY ${wordCountRange} words. This is a hard limit. Count your ou
 ${formattingGuidance}
 
 **Output:**
-Return ONLY the card content starting with #. No preamble, no explanation, no card-suggestions block. NOTHING outside the card content.
+Return ONLY the card content starting with #. No preamble, no explanation, no card-suggestions block. NOTHING outside the card content. The FIRST line MUST be a # heading.
 
-REMINDER: ${wordCountRange} words maximum. Count before responding.`.trim();
+REMINDER: Always start with # [Title]. ${wordCountRange} words maximum. Count before responding.`.trim();
 }

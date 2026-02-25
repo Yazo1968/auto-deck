@@ -1,27 +1,51 @@
-
-import React, { createContext, useContext, useState, useRef, useMemo, useCallback, useEffect } from 'react';
-import { UploadedFile, Heading, WorkflowMode, InsightsSession, InsightsDocument, Nugget, Project, InitialPersistedState, ChatMessage, DocChangeEvent } from '../types';
+import React, { createContext, useContext, useState, useMemo, useCallback, useEffect } from 'react';
+import {
+  UploadedFile,
+  Card,
+  Nugget,
+  Project,
+  InitialPersistedState,
+  ChatMessage,
+  DocChangeEvent,
+  CustomStyle,
+} from '../types';
+import { ThemeContext, useThemeContext } from './ThemeContext';
+import { NuggetContext, useNuggetContext } from './NuggetContext';
+import { ProjectContext, useProjectContext } from './ProjectContext';
+import { SelectionContext, useSelectionContext } from './SelectionContext';
+import { StyleContext, useStyleContext } from './StyleContext';
 
 // ── Context shape ──
 interface AppContextValue {
   // Core state
-  isFileSidebarOpen: boolean;
-  setIsFileSidebarOpen: React.Dispatch<React.SetStateAction<boolean>>;
-  activeHeadingId: string | null;
-  setActiveHeadingId: React.Dispatch<React.SetStateAction<string | null>>;
-
-  // Workflow state
-  insightsSession: InsightsSession | null;
-  setInsightsSession: React.Dispatch<React.SetStateAction<InsightsSession | null>>;
+  isProjectsPanelOpen: boolean;
+  setIsProjectsPanelOpen: React.Dispatch<React.SetStateAction<boolean>>;
+  activeCardId: string | null;
+  setActiveCardId: React.Dispatch<React.SetStateAction<string | null>>;
 
   // Derived values
-  activeHeading: Heading | null;
+  activeCard: Card | null;
 
   // Nugget state
   nuggets: Nugget[];
   setNuggets: React.Dispatch<React.SetStateAction<Nugget[]>>;
   selectedNuggetId: string | null;
   setSelectedNuggetId: React.Dispatch<React.SetStateAction<string | null>>;
+
+  // Document selection
+  selectedDocumentId: string | null;
+  setSelectedDocumentId: React.Dispatch<React.SetStateAction<string | null>>;
+  selectedDocument: UploadedFile | undefined;
+
+  // Project selection (explicit state for empty-project support)
+  selectedProjectId: string | null;
+
+  // Selection level — tracks what the user explicitly clicked (primary highlight)
+  selectionLevel: 'project' | 'nugget' | 'document' | null;
+  setSelectionLevel: React.Dispatch<React.SetStateAction<'project' | 'nugget' | 'document' | null>>;
+
+  // Unified selection helper (enforces project→nugget→document triple)
+  selectEntity: (opts: { projectId?: string; nuggetId?: string; documentId?: string }) => void;
 
   // Derived nugget values
   selectedNugget: Nugget | undefined;
@@ -31,9 +55,9 @@ interface AppContextValue {
   deleteNugget: (nuggetId: string) => void;
   updateNugget: (nuggetId: string, updater: (n: Nugget) => Nugget) => void;
 
-  updateNuggetHeading: (headingId: string, updater: (h: Heading) => Heading) => void;
-  updateNuggetHeadings: (updater: (h: Heading) => Heading) => void;
-  updateNuggetContentAndHeadings: (content: string, headings: Heading[]) => void;
+  updateNuggetCard: (cardId: string, updater: (c: Card) => Card) => void;
+  updateNuggetCards: (updater: (c: Card) => Card) => void;
+  updateNuggetContentAndCards: (content: string, cards: Card[]) => void;
   appendNuggetMessage: (message: ChatMessage) => void;
 
   // Nugget document mutation helpers
@@ -54,15 +78,40 @@ interface AppContextValue {
   addNuggetToProject: (projectId: string, nuggetId: string) => void;
   removeNuggetFromProject: (projectId: string, nuggetId: string) => void;
 
+  // Token usage (initial persisted totals for hydration)
+  initialTokenUsageTotals?: Record<string, number>;
+
+  // Custom styles (global, user-created)
+  customStyles: CustomStyle[];
+  addCustomStyle: (style: CustomStyle) => void;
+  updateCustomStyle: (id: string, updates: Partial<CustomStyle>) => void;
+  deleteCustomStyle: (id: string) => void;
+  replaceCustomStyles: (styles: CustomStyle[]) => void;
+
+  // Dark mode
+  darkMode: boolean;
+  toggleDarkMode: () => void;
 }
 
-const AppContext = createContext<AppContextValue | null>(null);
+// Minimal context for members not covered by any focused context
+interface AppContextRemainder {
+  isProjectsPanelOpen: boolean;
+  setIsProjectsPanelOpen: React.Dispatch<React.SetStateAction<boolean>>;
+  initialTokenUsageTotals?: Record<string, number>;
+}
 
-// ── Hook to consume context ──
+const AppContext = createContext<AppContextRemainder | null>(null);
+
+// ── Composition hook — merges all 5 focused contexts + remainder ──
 export function useAppContext(): AppContextValue {
   const ctx = useContext(AppContext);
   if (!ctx) throw new Error('useAppContext must be used inside <AppProvider>');
-  return ctx;
+  const theme = useThemeContext();
+  const nugget = useNuggetContext();
+  const project = useProjectContext();
+  const selection = useSelectionContext();
+  const style = useStyleContext();
+  return { ...ctx, ...theme, ...nugget, ...project, ...selection, ...style };
 }
 
 // ── Provider ──
@@ -71,335 +120,500 @@ export const AppProvider: React.FC<{
   initialState?: InitialPersistedState;
 }> = ({ children, initialState }) => {
   // Core state
-  const [isFileSidebarOpen, setIsFileSidebarOpen] = useState(true);
-  const [activeHeadingId, setActiveHeadingId] = useState<string | null>(initialState?.activeHeadingId ?? null);
-
-  // Insights session (backward compat shim for nugget data)
-  const [insightsSession, setInsightsSession] = useState<InsightsSession | null>(initialState?.insightsSession ?? null);
+  const [isProjectsPanelOpen, setIsProjectsPanelOpen] = useState(true);
+  const [activeCardId, setActiveCardId] = useState<string | null>(initialState?.activeCardId ?? null);
 
   // Nugget state (documents are now owned per-nugget, no global library)
   const [nuggets, setNuggets] = useState<Nugget[]>(initialState?.nuggets ?? []);
   const [selectedNuggetId, setSelectedNuggetId] = useState<string | null>(initialState?.selectedNuggetId ?? null);
 
+  // Document selection (context-level, synced with nugget)
+  const [selectedDocumentId, setSelectedDocumentId] = useState<string | null>(initialState?.selectedDocumentId ?? null);
+
   // Project state
   const [projects, setProjects] = useState<Project[]>(initialState?.projects ?? []);
 
+  // Project selection (explicit state so empty projects can be selected)
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(initialState?.selectedProjectId ?? null);
+
+  // Selection level — tracks what the user explicitly clicked (for primary vs context highlight)
+  const [selectionLevel, setSelectionLevel] = useState<'project' | 'nugget' | 'document' | null>(() => {
+    if (initialState?.selectedDocumentId) return 'document';
+    if (initialState?.selectedNuggetId) return 'nugget';
+    if (initialState?.selectedProjectId) return 'project';
+    return null;
+  });
+
+  // Custom styles state (global, not per-nugget)
+  const [customStyles, setCustomStyles] = useState<CustomStyle[]>(initialState?.customStyles ?? []);
+
+  // Dark mode
+  const [darkMode, setDarkMode] = useState<boolean>(() => {
+    const stored = localStorage.getItem('infonugget-dark-mode');
+    if (stored !== null) return stored === 'true';
+    return window.matchMedia('(prefers-color-scheme: dark)').matches;
+  });
+
+  useEffect(() => {
+    document.documentElement.classList.toggle('dark', darkMode);
+    localStorage.setItem('infonugget-dark-mode', String(darkMode));
+  }, [darkMode]);
+
+  const toggleDarkMode = useCallback(() => setDarkMode((prev) => !prev), []);
+
   // Derived: selected nugget
-  const selectedNugget = useMemo(
-    () => nuggets.find(n => n.id === selectedNuggetId),
-    [nuggets, selectedNuggetId],
+  const selectedNugget = useMemo(() => nuggets.find((n) => n.id === selectedNuggetId), [nuggets, selectedNuggetId]);
+
+  // Derived: selected document
+  const selectedDocument = useMemo(
+    () => selectedNugget?.documents.find((d) => d.id === selectedDocumentId),
+    [selectedNugget, selectedDocumentId],
   );
 
-  // ── Compatibility shim: selectedNuggetId → populate insights session ──
-  const shimReady = useRef(false);
-  useEffect(() => {
-    const timer = setTimeout(() => { shimReady.current = true; }, 100);
-    return () => clearTimeout(timer);
-  }, []);
+  // ── Unified selection helper: enforces project → nugget → document triple ──
+  const selectEntity = useCallback(
+    (opts: { projectId?: string; nuggetId?: string; documentId?: string }) => {
+      const { projectId, nuggetId, documentId } = opts;
 
-  useEffect(() => {
-    if (!shimReady.current) return;
-    const nugget = nuggets.find(n => n.id === selectedNuggetId);
+      if (documentId) {
+        // Find the nugget that owns this document, then derive parent project
+        const ownerNugget = nuggets.find((n) => n.documents.some((d) => d.id === documentId));
+        if (!ownerNugget) return;
+        const parentProject = projects.find((p) => p.nuggetIds.includes(ownerNugget.id));
+        setSelectionLevel('document');
+        setSelectedProjectId(parentProject?.id ?? null);
+        setSelectedNuggetId(ownerNugget.id);
+        setSelectedDocumentId(documentId);
+        return;
+      }
+      if (nuggetId) {
+        const parentProject = projects.find((p) => p.nuggetIds.includes(nuggetId));
+        setSelectionLevel('nugget');
+        setSelectedProjectId(parentProject?.id ?? null);
+        setSelectedNuggetId(nuggetId);
+        const nugget = nuggets.find((n) => n.id === nuggetId);
+        const firstDoc = nugget?.documents.find((d) => d.enabled !== false);
+        setSelectedDocumentId(firstDoc?.id ?? null);
+        return;
+      }
+      if (projectId) {
+        const project = projects.find((p) => p.id === projectId);
+        if (!project) return;
+        setSelectionLevel('project');
+        setSelectedProjectId(projectId);
+        if (project.nuggetIds.length > 0) {
+          // Cascade to first nugget + first doc
+          const firstNuggetId = project.nuggetIds[0];
+          setSelectedNuggetId(firstNuggetId);
+          const firstNugget = nuggets.find((n) => n.id === firstNuggetId);
+          const firstDoc = firstNugget?.documents.find((d) => d.enabled !== false);
+          setSelectedDocumentId(firstDoc?.id ?? null);
+        } else {
+          // Empty project — clear nugget & doc selection
+          setSelectedNuggetId(null);
+          setSelectedDocumentId(null);
+        }
+        return;
+      }
+    },
+    [nuggets, projects],
+  );
 
-    if (!nugget) {
-      setInsightsSession(null);
+  // ── Guard effect: keep selectedProjectId in sync ──
+  useEffect(() => {
+    // If a nugget is selected, ensure selectedProjectId matches its parent
+    if (selectedNuggetId) {
+      const parentProject = projects.find((p) => p.nuggetIds.includes(selectedNuggetId));
+      if (parentProject && parentProject.id !== selectedProjectId) {
+        setSelectedProjectId(parentProject.id);
+      }
       return;
     }
+    // If no nugget but we have a selectedProjectId, verify the project still exists
+    if (selectedProjectId && !projects.some((p) => p.id === selectedProjectId)) {
+      setSelectedProjectId(null);
+    }
+  }, [selectedNuggetId, projects]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    // Build synthetic session from nugget's owned documents
-    const syntheticSession: InsightsSession = {
-      id: nugget.id,
-      documents: nugget.documents.map(doc => ({
-        id: doc.id,
-        name: doc.name,
-        type: (doc.type === 'application/pdf' ? 'pdf'
-          : doc.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ? 'docx'
-          : 'md') as 'md' | 'pdf' | 'docx',
-        size: doc.size,
-        content: doc.content,
-      })),
-      messages: nugget.messages ?? [],
-      headings: nugget.headings,
-    };
-    setInsightsSession(syntheticSession);
-  }, [selectedNuggetId]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // ── Reverse sync: insights session changes → update active nugget ──
+  // ── Guard effect: keep selectedDocumentId valid when nugget/docs change ──
   useEffect(() => {
-    if (!shimReady.current || !selectedNuggetId || !insightsSession) return;
-    const nugget = nuggets.find(n => n.id === selectedNuggetId);
-    if (!nugget) return;
-    setNuggets(prev => prev.map(n =>
-      n.id === selectedNuggetId
-        ? {
-            ...n,
-            messages: insightsSession.messages,
-            headings: insightsSession.headings,
-            lastModifiedAt: Date.now(),
-          }
-        : n
-    ));
-  }, [insightsSession]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (!selectedNuggetId) {
+      setSelectedDocumentId(null);
+      return;
+    }
+    const nugget = nuggets.find((n) => n.id === selectedNuggetId);
+    if (!nugget) {
+      setSelectedDocumentId(null);
+      return;
+    }
+    // If current doc is still in this nugget, keep it
+    if (selectedDocumentId && nugget.documents.some((d) => d.id === selectedDocumentId)) return;
+    // Auto-select first enabled doc
+    const firstDoc = nugget.documents.find((d) => d.enabled !== false);
+    setSelectedDocumentId(firstDoc?.id ?? null);
+  }, [selectedNuggetId, nuggets]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Derived: currently active heading — from nugget/insights headings
-  const activeHeading = useMemo(() => {
-    const headings = selectedNugget?.headings ?? insightsSession?.headings ?? [];
-    if (headings.length === 0) return null;
-    return headings.find(h => h.id === activeHeadingId) || headings[0];
-  }, [selectedNugget, insightsSession, activeHeadingId]);
+  // Derived: currently active card
+  const activeCard = useMemo(() => {
+    const cards = selectedNugget?.cards ?? [];
+    if (cards.length === 0) return null;
+    return cards.find((c) => c.id === activeCardId) || cards[0];
+  }, [selectedNugget, activeCardId]);
 
   // Nugget helpers
   const addNugget = useCallback((nugget: Nugget) => {
-    setNuggets(prev => [...prev, nugget]);
+    setNuggets((prev) => [...prev, nugget]);
   }, []);
 
-  const deleteNugget = useCallback((nuggetId: string) => {
-    setNuggets(prev => prev.filter(n => n.id !== nuggetId));
-    // Also remove from whichever project contains it
-    setProjects(prev => prev.map(p =>
-      p.nuggetIds.includes(nuggetId)
-        ? { ...p, nuggetIds: p.nuggetIds.filter(id => id !== nuggetId), lastModifiedAt: Date.now() }
-        : p
-    ));
-    if (selectedNuggetId === nuggetId) {
-      setSelectedNuggetId(null);
-    }
-  }, [selectedNuggetId]);
+  const deleteNugget = useCallback(
+    (nuggetId: string) => {
+      setNuggets((prev) => prev.filter((n) => n.id !== nuggetId));
+      // Also remove from whichever project contains it
+      setProjects((prev) =>
+        prev.map((p) =>
+          p.nuggetIds.includes(nuggetId)
+            ? { ...p, nuggetIds: p.nuggetIds.filter((id) => id !== nuggetId), lastModifiedAt: Date.now() }
+            : p,
+        ),
+      );
+      if (selectedNuggetId === nuggetId) {
+        setSelectedNuggetId(null);
+        setSelectionLevel(null);
+      }
+    },
+    [selectedNuggetId],
+  );
 
   const updateNugget = useCallback((nuggetId: string, updater: (n: Nugget) => Nugget) => {
-    setNuggets(prev => prev.map(n => n.id === nuggetId ? updater(n) : n));
+    setNuggets((prev) => prev.map((n) => (n.id === nuggetId ? updater(n) : n)));
   }, []);
 
   // ── Unified nugget helpers ──
 
-  const updateNuggetHeading = useCallback((headingId: string, updater: (h: Heading) => Heading) => {
-    if (!selectedNuggetId) return;
-    const mapFn = (h: Heading) => h.id === headingId ? updater(h) : h;
+  const updateNuggetCard = useCallback(
+    (cardId: string, updater: (c: Card) => Card) => {
+      if (!selectedNuggetId) return;
+      const mapFn = (c: Card) => (c.id === cardId ? updater(c) : c);
 
-    setNuggets(prev => prev.map(n =>
-      n.id === selectedNuggetId
-        ? { ...n, headings: n.headings.map(mapFn), lastModifiedAt: Date.now() }
-        : n
-    ));
+      setNuggets((prev) =>
+        prev.map((n) =>
+          n.id === selectedNuggetId ? { ...n, cards: n.cards.map(mapFn), lastModifiedAt: Date.now() } : n,
+        ),
+      );
+    },
+    [selectedNuggetId],
+  );
 
-    if (insightsSession) {
-      setInsightsSession(prev => prev ? { ...prev, headings: prev.headings.map(mapFn) } : prev);
-    }
-  }, [selectedNuggetId, insightsSession]);
+  const updateNuggetCards = useCallback(
+    (updater: (c: Card) => Card) => {
+      if (!selectedNuggetId) return;
 
-  const updateNuggetHeadings = useCallback((updater: (h: Heading) => Heading) => {
-    if (!selectedNuggetId) return;
+      setNuggets((prev) =>
+        prev.map((n) =>
+          n.id === selectedNuggetId ? { ...n, cards: n.cards.map(updater), lastModifiedAt: Date.now() } : n,
+        ),
+      );
+    },
+    [selectedNuggetId],
+  );
 
-    setNuggets(prev => prev.map(n =>
-      n.id === selectedNuggetId
-        ? { ...n, headings: n.headings.map(updater), lastModifiedAt: Date.now() }
-        : n
-    ));
+  const updateNuggetContentAndCards = useCallback(
+    (content: string, cards: Card[]) => {
+      if (!selectedNuggetId) return;
+      setNuggets((prev) =>
+        prev.map((n) => (n.id === selectedNuggetId ? { ...n, cards, lastModifiedAt: Date.now() } : n)),
+      );
+    },
+    [selectedNuggetId],
+  );
 
-    if (insightsSession) {
-      setInsightsSession(prev => prev ? { ...prev, headings: prev.headings.map(updater) } : prev);
-    }
-  }, [selectedNuggetId, insightsSession]);
-
-  const updateNuggetContentAndHeadings = useCallback((content: string, headings: Heading[]) => {
-    if (!selectedNuggetId) return;
-    setNuggets(prev => prev.map(n =>
-      n.id === selectedNuggetId
-        ? { ...n, headings, lastModifiedAt: Date.now() }
-        : n
-    ));
-  }, [selectedNuggetId]);
-
-  const appendNuggetMessage = useCallback((message: ChatMessage) => {
-    if (!selectedNuggetId) return;
-    setNuggets(prev => prev.map(n =>
-      n.id === selectedNuggetId
-        ? { ...n, messages: [...(n.messages || []), message], lastModifiedAt: Date.now() }
-        : n
-    ));
-    setInsightsSession(prev => prev ? { ...prev, messages: [...prev.messages, message] } : prev);
-  }, [selectedNuggetId]);
+  const appendNuggetMessage = useCallback(
+    (message: ChatMessage) => {
+      if (!selectedNuggetId) return;
+      setNuggets((prev) =>
+        prev.map((n) =>
+          n.id === selectedNuggetId
+            ? { ...n, messages: [...(n.messages || []), message], lastModifiedAt: Date.now() }
+            : n,
+        ),
+      );
+    },
+    [selectedNuggetId],
+  );
 
   // ── Nugget document mutation helpers ──
 
-  /** Convert UploadedFile → InsightsDocument for session sync */
-  const toInsightsDoc = useCallback((doc: UploadedFile): InsightsDocument => ({
-    id: doc.id,
-    name: doc.name,
-    type: (doc.type === 'application/pdf' ? 'pdf'
-      : doc.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ? 'docx'
-      : 'md') as 'md' | 'pdf' | 'docx',
-    size: doc.size,
-    content: doc.content,
-  }), []);
+  const addNuggetDocument = useCallback(
+    (doc: UploadedFile) => {
+      if (!selectedNuggetId) return;
+      const event: DocChangeEvent = { type: 'added', docId: doc.id, docName: doc.name, timestamp: Date.now() };
+      setNuggets((prev) =>
+        prev.map((n) =>
+          n.id === selectedNuggetId
+            ? {
+                ...n,
+                documents: [...n.documents, doc],
+                docChangeLog: [...(n.docChangeLog || []), event],
+                lastModifiedAt: Date.now(),
+              }
+            : n,
+        ),
+      );
+    },
+    [selectedNuggetId],
+  );
 
-  const addNuggetDocument = useCallback((doc: UploadedFile) => {
-    if (!selectedNuggetId) return;
-    const event: DocChangeEvent = { type: 'added', docId: doc.id, docName: doc.name, timestamp: Date.now() };
-    setNuggets(prev => prev.map(n =>
-      n.id === selectedNuggetId
-        ? { ...n, documents: [...n.documents, doc], docChangeLog: [...(n.docChangeLog || []), event], lastModifiedAt: Date.now() }
-        : n
-    ));
-    // Sync insights session
-    setInsightsSession(prev => {
-      if (!prev) return prev;
-      return { ...prev, documents: [...prev.documents, toInsightsDoc(doc)] };
-    });
-  }, [selectedNuggetId, toInsightsDoc]);
+  const updateNuggetDocument = useCallback(
+    (docId: string, updated: UploadedFile) => {
+      if (!selectedNuggetId) return;
+      const event: DocChangeEvent = { type: 'updated', docId, docName: updated.name, timestamp: Date.now() };
+      setNuggets((prev) =>
+        prev.map((n) => {
+          if (n.id !== selectedNuggetId) return n;
+          // Only log if the doc was already fully processed (skip placeholder→ready transitions)
+          const existing = n.documents.find((d) => d.id === docId);
+          const shouldLog = existing && existing.status === 'ready' && updated.status === 'ready';
+          return {
+            ...n,
+            documents: n.documents.map((d) => (d.id === docId ? updated : d)),
+            ...(shouldLog ? { docChangeLog: [...(n.docChangeLog || []), event] } : {}),
+            lastModifiedAt: Date.now(),
+          };
+        }),
+      );
+    },
+    [selectedNuggetId],
+  );
 
-  const updateNuggetDocument = useCallback((docId: string, updated: UploadedFile) => {
-    if (!selectedNuggetId) return;
-    const event: DocChangeEvent = { type: 'updated', docId, docName: updated.name, timestamp: Date.now() };
-    setNuggets(prev => prev.map(n => {
-      if (n.id !== selectedNuggetId) return n;
-      // Only log if the doc was already fully processed (skip placeholder→ready transitions)
-      const existing = n.documents.find(d => d.id === docId);
-      const shouldLog = existing && existing.status === 'ready' && updated.status === 'ready';
-      return {
-        ...n,
-        documents: n.documents.map(d => d.id === docId ? updated : d),
-        ...(shouldLog ? { docChangeLog: [...(n.docChangeLog || []), event] } : {}),
-        lastModifiedAt: Date.now(),
+  const removeNuggetDocument = useCallback(
+    (docId: string) => {
+      if (!selectedNuggetId) return;
+      setNuggets((prev) =>
+        prev.map((n) => {
+          if (n.id !== selectedNuggetId) return n;
+          const doc = n.documents.find((d) => d.id === docId);
+          const event: DocChangeEvent = {
+            type: 'removed',
+            docId,
+            docName: doc?.name || 'Unknown',
+            timestamp: Date.now(),
+          };
+          return {
+            ...n,
+            documents: n.documents.filter((d) => d.id !== docId),
+            docChangeLog: [...(n.docChangeLog || []), event],
+            lastModifiedAt: Date.now(),
+          };
+        }),
+      );
+    },
+    [selectedNuggetId],
+  );
+
+  const renameNuggetDocument = useCallback(
+    (docId: string, newName: string) => {
+      if (!selectedNuggetId) return;
+      setNuggets((prev) =>
+        prev.map((n) => {
+          if (n.id !== selectedNuggetId) return n;
+          const doc = n.documents.find((d) => d.id === docId);
+          const event: DocChangeEvent = {
+            type: 'renamed',
+            docId,
+            docName: newName,
+            oldName: doc?.name,
+            timestamp: Date.now(),
+          };
+          return {
+            ...n,
+            documents: n.documents.map((d) =>
+              d.id === docId ? { ...d, name: newName, lastRenamedAt: Date.now(), version: (d.version ?? 1) + 1 } : d,
+            ),
+            docChangeLog: [...(n.docChangeLog || []), event],
+            lastModifiedAt: Date.now(),
+          };
+        }),
+      );
+    },
+    [selectedNuggetId],
+  );
+
+  const toggleNuggetDocument = useCallback(
+    (docId: string) => {
+      if (!selectedNuggetId) return;
+      // Capture current state before toggle
+      const nugget = nuggets.find((n) => n.id === selectedNuggetId);
+      const doc = nugget?.documents.find((d) => d.id === docId);
+      const wasEnabled = doc?.enabled !== false;
+
+      const event: DocChangeEvent = {
+        type: wasEnabled ? 'disabled' : 'enabled',
+        docId,
+        docName: doc?.name || 'Unknown',
+        timestamp: Date.now(),
       };
-    }));
-    // Sync insights session
-    setInsightsSession(prev => {
-      if (!prev) return prev;
-      const exists = prev.documents.some(d => d.id === docId);
-      if (exists) {
-        return { ...prev, documents: prev.documents.map(d => d.id === docId ? toInsightsDoc(updated) : d) };
-      }
-      // Doc was a placeholder that just finished processing — add it
-      return { ...prev, documents: [...prev.documents, toInsightsDoc(updated)] };
-    });
-  }, [selectedNuggetId, toInsightsDoc, nuggets]);
-
-  const removeNuggetDocument = useCallback((docId: string) => {
-    if (!selectedNuggetId) return;
-    setNuggets(prev => prev.map(n => {
-      if (n.id !== selectedNuggetId) return n;
-      const doc = n.documents.find(d => d.id === docId);
-      const event: DocChangeEvent = { type: 'removed', docId, docName: doc?.name || 'Unknown', timestamp: Date.now() };
-      return { ...n, documents: n.documents.filter(d => d.id !== docId), docChangeLog: [...(n.docChangeLog || []), event], lastModifiedAt: Date.now() };
-    }));
-    // Sync insights session
-    setInsightsSession(prev => {
-      if (!prev) return prev;
-      return { ...prev, documents: prev.documents.filter(d => d.id !== docId) };
-    });
-  }, [selectedNuggetId]);
-
-  const renameNuggetDocument = useCallback((docId: string, newName: string) => {
-    if (!selectedNuggetId) return;
-    setNuggets(prev => prev.map(n => {
-      if (n.id !== selectedNuggetId) return n;
-      const doc = n.documents.find(d => d.id === docId);
-      const event: DocChangeEvent = { type: 'renamed', docId, docName: newName, oldName: doc?.name, timestamp: Date.now() };
-      return { ...n, documents: n.documents.map(d => d.id === docId ? { ...d, name: newName } : d), docChangeLog: [...(n.docChangeLog || []), event], lastModifiedAt: Date.now() };
-    }));
-    // Sync insights session
-    setInsightsSession(prev => {
-      if (!prev) return prev;
-      return { ...prev, documents: prev.documents.map(d => d.id === docId ? { ...d, name: newName } : d) };
-    });
-  }, [selectedNuggetId]);
-
-  const toggleNuggetDocument = useCallback((docId: string) => {
-    if (!selectedNuggetId) return;
-    // Capture current state before toggle
-    const nugget = nuggets.find(n => n.id === selectedNuggetId);
-    const doc = nugget?.documents.find(d => d.id === docId);
-    const wasEnabled = doc?.enabled !== false;
-
-    const event: DocChangeEvent = { type: wasEnabled ? 'disabled' : 'enabled', docId, docName: doc?.name || 'Unknown', timestamp: Date.now() };
-    setNuggets(prev => prev.map(n =>
-      n.id === selectedNuggetId
-        ? { ...n, documents: n.documents.map(d => d.id === docId ? { ...d, enabled: !(d.enabled !== false) } : d), docChangeLog: [...(n.docChangeLog || []), event], lastModifiedAt: Date.now() }
-        : n
-    ));
-    // Sync insights session — remove disabled docs, add enabled ones back
-    setInsightsSession(prev => {
-      if (!prev) return prev;
-      if (wasEnabled) {
-        // Was enabled, now being disabled — remove from session
-        return { ...prev, documents: prev.documents.filter(d => d.id !== docId) };
-      } else {
-        // Was disabled, now being enabled — add back to session
-        if (doc) return { ...prev, documents: [...prev.documents, toInsightsDoc(doc)] };
-        return prev;
-      }
-    });
-  }, [selectedNuggetId, nuggets, toInsightsDoc]);
+      setNuggets((prev) =>
+        prev.map((n) =>
+          n.id === selectedNuggetId
+            ? {
+                ...n,
+                documents: n.documents.map((d) =>
+                  d.id === docId
+                    ? {
+                        ...d,
+                        enabled: !(d.enabled !== false),
+                        ...(wasEnabled ? { lastDisabledAt: Date.now() } : { lastEnabledAt: Date.now() }),
+                      }
+                    : d,
+                ),
+                docChangeLog: [...(n.docChangeLog || []), event],
+                lastModifiedAt: Date.now(),
+              }
+            : n,
+        ),
+      );
+    },
+    [selectedNuggetId, nuggets],
+  );
 
   // ── Project helpers ──
 
   const addProject = useCallback((project: Project) => {
-    setProjects(prev => [...prev, project]);
+    setProjects((prev) => [...prev, project]);
   }, []);
 
-  const deleteProject = useCallback((projectId: string) => {
-    const project = projects.find(p => p.id === projectId);
-    if (project) {
-      // Cascade: delete all nuggets in this project
-      for (const nuggetId of project.nuggetIds) {
-        setNuggets(prev => prev.filter(n => n.id !== nuggetId));
-        if (selectedNuggetId === nuggetId) {
-          setSelectedNuggetId(null);
+  const deleteProject = useCallback(
+    (projectId: string) => {
+      const project = projects.find((p) => p.id === projectId);
+      if (project) {
+        // Cascade: delete all nuggets in this project
+        for (const nuggetId of project.nuggetIds) {
+          setNuggets((prev) => prev.filter((n) => n.id !== nuggetId));
+          if (selectedNuggetId === nuggetId) {
+            setSelectedNuggetId(null);
+            setSelectionLevel(null);
+          }
         }
       }
-    }
-    setProjects(prev => prev.filter(p => p.id !== projectId));
-  }, [projects, selectedNuggetId]);
+      setProjects((prev) => prev.filter((p) => p.id !== projectId));
+    },
+    [projects, selectedNuggetId],
+  );
 
   const updateProject = useCallback((projectId: string, updater: (p: Project) => Project) => {
-    setProjects(prev => prev.map(p => p.id === projectId ? updater(p) : p));
+    setProjects((prev) => prev.map((p) => (p.id === projectId ? updater(p) : p)));
   }, []);
 
   const addNuggetToProject = useCallback((projectId: string, nuggetId: string) => {
-    setProjects(prev => prev.map(p =>
-      p.id === projectId
-        ? { ...p, nuggetIds: [...p.nuggetIds, nuggetId], lastModifiedAt: Date.now() }
-        : p
-    ));
+    setProjects((prev) =>
+      prev.map((p) =>
+        p.id === projectId ? { ...p, nuggetIds: [...p.nuggetIds, nuggetId], lastModifiedAt: Date.now() } : p,
+      ),
+    );
   }, []);
 
   const removeNuggetFromProject = useCallback((projectId: string, nuggetId: string) => {
-    setProjects(prev => prev.map(p =>
-      p.id === projectId
-        ? { ...p, nuggetIds: p.nuggetIds.filter(id => id !== nuggetId), lastModifiedAt: Date.now() }
-        : p
-    ));
+    setProjects((prev) =>
+      prev.map((p) =>
+        p.id === projectId
+          ? { ...p, nuggetIds: p.nuggetIds.filter((id) => id !== nuggetId), lastModifiedAt: Date.now() }
+          : p,
+      ),
+    );
   }, []);
 
-  const value = useMemo<AppContextValue>(() => ({
-    isFileSidebarOpen, setIsFileSidebarOpen,
-    activeHeadingId, setActiveHeadingId,
-    insightsSession, setInsightsSession,
-    nuggets, setNuggets,
-    selectedNuggetId, setSelectedNuggetId,
-    selectedNugget,
-    activeHeading,
-    addNugget, deleteNugget, updateNugget,
-    updateNuggetHeading, updateNuggetHeadings,
-    updateNuggetContentAndHeadings,
-    appendNuggetMessage,
-    addNuggetDocument, updateNuggetDocument, removeNuggetDocument, renameNuggetDocument, toggleNuggetDocument,
-    projects, setProjects,
-    addProject, deleteProject, updateProject, addNuggetToProject, removeNuggetFromProject,
-  }), [
-    isFileSidebarOpen, activeHeadingId,
-    insightsSession,
-    nuggets, selectedNuggetId, selectedNugget,
-    activeHeading,
-    addNugget, deleteNugget, updateNugget,
-    updateNuggetHeading, updateNuggetHeadings,
-    updateNuggetContentAndHeadings,
-    appendNuggetMessage,
-    addNuggetDocument, updateNuggetDocument, removeNuggetDocument, renameNuggetDocument, toggleNuggetDocument,
-    projects,
-    addProject, deleteProject, updateProject, addNuggetToProject, removeNuggetFromProject,
-  ]);
+  // Custom style helpers
+  const addCustomStyle = useCallback((style: CustomStyle) => {
+    setCustomStyles((prev) => [...prev, style]);
+  }, []);
 
-  return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
+  const updateCustomStyle = useCallback((id: string, updates: Partial<CustomStyle>) => {
+    setCustomStyles((prev) => prev.map((s) => (s.id === id ? { ...s, ...updates, lastModifiedAt: Date.now() } : s)));
+  }, []);
+
+  const deleteCustomStyle = useCallback((id: string) => {
+    setCustomStyles((prev) => prev.filter((s) => s.id !== id));
+  }, []);
+
+  const replaceCustomStyles = useCallback((styles: CustomStyle[]) => {
+    setCustomStyles(styles);
+  }, []);
+
+  // ── Memoized context slices ──
+
+  const themeValue = useMemo(
+    () => ({ darkMode, toggleDarkMode }),
+    [darkMode, toggleDarkMode],
+  );
+
+  const nuggetValue = useMemo(
+    () => ({
+      nuggets, setNuggets,
+      selectedNuggetId, setSelectedNuggetId,
+      selectedNugget,
+      selectedDocumentId, setSelectedDocumentId,
+      selectedDocument,
+      addNugget, deleteNugget, updateNugget,
+      updateNuggetCard, updateNuggetCards, updateNuggetContentAndCards, appendNuggetMessage,
+      addNuggetDocument, updateNuggetDocument, removeNuggetDocument, renameNuggetDocument, toggleNuggetDocument,
+    }),
+    [
+      nuggets, selectedNuggetId, selectedNugget, selectedDocumentId, selectedDocument,
+      addNugget, deleteNugget, updateNugget,
+      updateNuggetCard, updateNuggetCards, updateNuggetContentAndCards, appendNuggetMessage,
+      addNuggetDocument, updateNuggetDocument, removeNuggetDocument, renameNuggetDocument, toggleNuggetDocument,
+    ],
+  );
+
+  const projectValue = useMemo(
+    () => ({
+      projects, setProjects,
+      addProject, deleteProject, updateProject,
+      addNuggetToProject, removeNuggetFromProject,
+    }),
+    [projects, addProject, deleteProject, updateProject, addNuggetToProject, removeNuggetFromProject],
+  );
+
+  const selectionValue = useMemo(
+    () => ({
+      activeCardId, setActiveCardId, activeCard,
+      selectedProjectId,
+      selectionLevel, setSelectionLevel,
+      selectEntity,
+    }),
+    [activeCardId, activeCard, selectedProjectId, selectionLevel, selectEntity],
+  );
+
+  const styleValue = useMemo(
+    () => ({
+      customStyles,
+      addCustomStyle, updateCustomStyle, deleteCustomStyle, replaceCustomStyles,
+    }),
+    [customStyles, addCustomStyle, updateCustomStyle, deleteCustomStyle, replaceCustomStyles],
+  );
+
+  // ── Minimal remainder (members not in any focused context) ──
+
+  const remainderValue = useMemo<AppContextRemainder>(
+    () => ({
+      isProjectsPanelOpen,
+      setIsProjectsPanelOpen,
+      initialTokenUsageTotals: initialState?.tokenUsageTotals,
+    }),
+    [isProjectsPanelOpen, initialState?.tokenUsageTotals],
+  );
+
+  return (
+    <ThemeContext.Provider value={themeValue}>
+      <ProjectContext.Provider value={projectValue}>
+        <NuggetContext.Provider value={nuggetValue}>
+          <SelectionContext.Provider value={selectionValue}>
+            <StyleContext.Provider value={styleValue}>
+              <AppContext.Provider value={remainderValue}>{children}</AppContext.Provider>
+            </StyleContext.Provider>
+          </SelectionContext.Provider>
+        </NuggetContext.Provider>
+      </ProjectContext.Provider>
+    </ThemeContext.Provider>
+  );
 };
